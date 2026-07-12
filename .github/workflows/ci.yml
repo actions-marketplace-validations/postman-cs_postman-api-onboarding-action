@@ -16,7 +16,7 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.0
         with:
           # Full history so commitlint can lint the PR commit range.
           fetch-depth: 0
