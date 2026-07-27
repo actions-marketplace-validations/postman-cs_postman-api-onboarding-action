@@ -332,6 +332,9 @@ outputs:
   flow-apply-summary-json:
     description: JSON summary of smoke-flow application results and warnings (empty when the smoke-flow step did not run).
     value: ${{ steps.smoke_flow.outputs.flow-apply-summary-json }}
+  derived-flow-json:
+    description: JSON FlowDefinition of the derived flow when smoke-flow derived one from spec-path (empty for curated manifests, uncurated refreshes, and skipped runs). Structural curation seed only.
+    value: ${{ steps.smoke_flow.outputs.derived-flow-json }}
   bootstrap-outcome:
     description: GitHub Actions runner outcome for the bootstrap step.
     value: ${{ steps.bootstrap.outcome }}
@@ -576,7 +579,7 @@ runs:
     - id: smoke_flow
       name: Apply curated Smoke flow
       if: ${{ (inputs.flow-path != '' || inputs.flow-mode != '') && steps.branch_decision.outputs.tier != 'gated' }}
-      uses: postman-cs/postman-smoke-flow-action@v2.3.0
+      uses: postman-cs/postman-smoke-flow-action@v2.4.0
       env:
         POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
         POSTMAN_BRANCH_DECISION: ${{ steps.branch_decision.outputs.branch-decision }}

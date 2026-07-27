@@ -330,6 +330,7 @@ Tables are generated from `action.yml` by `npm run docs:tables`.
 | `spec-version-url` | Read-only URL for the canonical Spec Hub version finalized by repo-sync. |
 | `flow-apply-status` | Smoke-flow apply result status (empty when the smoke-flow step did not run). |
 | `flow-apply-summary-json` | JSON summary of smoke-flow application results and warnings (empty when the smoke-flow step did not run). |
+| `derived-flow-json` | JSON FlowDefinition of the derived flow when smoke-flow derived one from spec-path (empty for curated manifests, uncurated refreshes, and skipped runs). Structural curation seed only. |
 | `bootstrap-outcome` | GitHub Actions runner outcome for the bootstrap step. |
 | `repo-sync-outcome` | GitHub Actions runner outcome for the repo sync step. |
 | `smoke-flow-outcome` | GitHub Actions runner outcome for the smoke-flow step (skipped when neither flow-path nor flow-mode is set). |
