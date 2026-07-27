@@ -207,11 +207,14 @@ inputs:
     default: support@postman.com
   flow-path:
     description: |
-      Optional repo-root-relative path to a curated smoke flow.yaml manifest.
-      When set, the composite chains postman-cs/postman-smoke-flow-action after
-      repo sync to reshape the canonical Smoke collection from the manifest
-      before the built-in smoke and contract test run. Leave empty (default) to
-      skip the smoke-flow step unless flow-mode requests it.
+      Optional repo-root-relative path to the smoke flow.yaml manifest,
+      defaulting to postman/flow.yaml inside the wrapped action. When set, the
+      composite chains postman-cs/postman-smoke-flow-action before repo sync:
+      a manifest at the effective path drives a curated reshape of the
+      canonical Smoke collection, and under flow-mode auto a missing manifest
+      is derived from spec-path and persisted to that path so repo sync
+      commits it and the next run takes the curated path. Leave empty
+      (default) to skip the smoke-flow step unless flow-mode requests it.
     required: false
     default: ''
   flow-mode:
@@ -219,10 +222,11 @@ inputs:
       Optional flow selection policy forwarded to postman-cs/postman-smoke-flow-action.
       Set to auto to run the smoke-flow step without a curated manifest: it
       derives a deterministic smoke flow from spec-path (create before read,
-      output-to-input bindings resolved by provenance). Set to curated to
-      require flow-path, or off to refresh the canonical Smoke collection
-      without curation. Leave empty (default) to run the smoke-flow step only
-      when flow-path is set, preserving the pre-flow-mode contract.
+      output-to-input bindings resolved by provenance) and persists it to the
+      effective flow path for repo sync to commit. Set to curated to require
+      flow-path, or off to refresh the canonical Smoke collection without
+      curation. Leave empty (default) to run the smoke-flow step only when
+      flow-path is set, preserving the pre-flow-mode contract.
     required: false
     default: ''
   flow-allow-delete:
@@ -233,6 +237,15 @@ inputs:
       manifests. Defaults to false.
     required: false
     default: 'false'
+  persist-derived-flow:
+    description: |
+      Whether a freshly derived smoke flow is written to the effective flow
+      path (flow-path or postman/flow.yaml) after a successful apply, so repo
+      sync commits it and the next run is curated. Forwarded to
+      postman-cs/postman-smoke-flow-action; create-only, never overwrites an
+      existing manifest. Set false to derive without persisting.
+    required: false
+    default: 'true'
   enable-insights:
     description: Whether to enable Postman Insights.
     required: false
@@ -332,9 +345,9 @@ outputs:
   flow-apply-summary-json:
     description: JSON summary of smoke-flow application results and warnings (empty when the smoke-flow step did not run).
     value: ${{ steps.smoke_flow.outputs.flow-apply-summary-json }}
-  derived-flow-json:
-    description: JSON FlowDefinition of the derived flow when smoke-flow derived one from spec-path (empty for curated manifests, uncurated refreshes, and skipped runs). Structural curation seed only.
-    value: ${{ steps.smoke_flow.outputs.derived-flow-json }}
+  derived-flow-path:
+    description: Repo-relative path where the smoke-flow step persisted a derived flow.yaml this run (empty for curated manifests, persistence opt-out, uncurated refreshes, and skipped runs). The reordered repo-sync step commits the file with the rest of the postman tree.
+    value: ${{ steps.smoke_flow.outputs.derived-flow-path }}
   bootstrap-outcome:
     description: GitHub Actions runner outcome for the bootstrap step.
     value: ${{ steps.bootstrap.outcome }}
@@ -524,6 +537,30 @@ runs:
         integration-backend: ${{ inputs.integration-backend }}
         postman-region: ${{ inputs.postman-region }}
         postman-stack: ${{ inputs.postman-stack }}
+    - id: smoke_flow
+      name: Apply Smoke flow
+      if: ${{ (inputs.flow-path != '' || inputs.flow-mode != '') && steps.branch_decision.outputs.tier != 'gated' }}
+      uses: postman-cs/postman-smoke-flow-action@v3.0.0
+      env:
+        POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
+        POSTMAN_BRANCH_DECISION: ${{ steps.branch_decision.outputs.branch-decision }}
+      with:
+        project-name: ${{ inputs.project-name }}
+        workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
+        spec-id: ${{ steps.bootstrap.outputs.spec-id }}
+        smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
+        flow-path: ${{ inputs.flow-path }}
+        flow-mode: ${{ inputs.flow-mode == '' && 'auto' || inputs.flow-mode }}
+        flow-allow-delete: ${{ inputs.flow-allow-delete }}
+        persist-derived-flow: ${{ inputs.persist-derived-flow }}
+        spec-path: ${{ inputs.spec-path }}
+        postman-api-key: ${{ inputs.postman-api-key }}
+        postman-access-token: ${{ inputs.postman-access-token }}
+        postman-region: ${{ inputs.postman-region }}
+        team-id: ${{ inputs.postman-team-id }}
+        branch-strategy: ${{ inputs.branch-strategy }}
+        canonical-branch: ${{ inputs.canonical-branch }}
+        channels: ${{ inputs.channels }}
     - id: repo_sync
       name: Sync Repository and Workspace
       if: ${{ steps.branch_decision.outputs.tier != 'gated' }}
@@ -537,7 +574,10 @@ runs:
         baseline-collection-id: ${{ steps.bootstrap.outputs.baseline-collection-id }}
         smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
         contract-collection-id: ${{ steps.bootstrap.outputs.contract-collection-id }}
-        prebuilt-collections-json: ${{ steps.bootstrap.outputs.prebuilt-collections-json }}
+        # smoke_flow reshapes the cloud Smoke collection before repo-sync runs;
+        # digest-matched prebuilt reuse would keep the pre-reshape on-disk tree and
+        # skip the cloud export, so flow runs force a fresh export of every role.
+        prebuilt-collections-json: ${{ steps.smoke_flow.outcome == 'skipped' && steps.bootstrap.outputs.prebuilt-collections-json || '' }}
         collection-sync-mode: ${{ inputs.collection-sync-mode }}
         spec-sync-mode: ${{ inputs.spec-sync-mode }}
         release-label: ${{ inputs.release-label }}
@@ -576,29 +616,6 @@ runs:
         spec-id: ${{ steps.bootstrap.outputs.spec-id }}
         spec-path: ${{ inputs.spec-path }}
         postman-stack: ${{ inputs.postman-stack }}
-    - id: smoke_flow
-      name: Apply curated Smoke flow
-      if: ${{ (inputs.flow-path != '' || inputs.flow-mode != '') && steps.branch_decision.outputs.tier != 'gated' }}
-      uses: postman-cs/postman-smoke-flow-action@v2.4.0
-      env:
-        POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
-        POSTMAN_BRANCH_DECISION: ${{ steps.branch_decision.outputs.branch-decision }}
-      with:
-        project-name: ${{ inputs.project-name }}
-        workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
-        spec-id: ${{ steps.bootstrap.outputs.spec-id }}
-        smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
-        flow-path: ${{ inputs.flow-path }}
-        flow-mode: ${{ inputs.flow-mode == '' && 'auto' || inputs.flow-mode }}
-        flow-allow-delete: ${{ inputs.flow-allow-delete }}
-        spec-path: ${{ inputs.spec-path }}
-        postman-api-key: ${{ inputs.postman-api-key }}
-        postman-access-token: ${{ inputs.postman-access-token }}
-        postman-region: ${{ inputs.postman-region }}
-        team-id: ${{ inputs.postman-team-id }}
-        branch-strategy: ${{ inputs.branch-strategy }}
-        canonical-branch: ${{ inputs.canonical-branch }}
-        channels: ${{ inputs.channels }}
     - id: warn_tests_skipped_no_api_key
       name: Warn when built-in tests are skipped because no Postman API key is present
       # D2: the built-in test step authenticates the Postman CLI with
