@@ -234,6 +234,7 @@ describe('postman-api-onboarding-action composite contract', () => {
         'current-ref',
         'committer-name',
         'committer-email',
+        'flow-path',
         'enable-insights',
         'skip-built-in-tests',
         'cluster-name',
@@ -329,8 +330,11 @@ describe('postman-api-onboarding-action composite contract', () => {
         'commit-sha',
         'sync-status',
         'spec-version-url',
+        'flow-apply-status',
+        'flow-apply-summary-json',
         'bootstrap-outcome',
         'repo-sync-outcome',
+        'smoke-flow-outcome',
         'insights-outcome',
         'insights-status',
         'insights-verification-token',
@@ -346,7 +350,7 @@ describe('postman-api-onboarding-action composite contract', () => {
     it('is a composite action with the expected step count', () => {
       const manifest = loadManifest();
       expect(manifest.runs.using).toBe('composite');
-      expect(manifest.runs.steps).toHaveLength(9);
+      expect(manifest.runs.steps).toHaveLength(10);
     });
 
     it('uses pinned bootstrap, repo-sync, junit-runner, junit-uploader, and insights actions', () => {
@@ -357,6 +361,7 @@ describe('postman-api-onboarding-action composite contract', () => {
       const repoSyncStep = steps.find((step) => step.id === 'repo_sync');
       const junitStep = steps.find((step) => step.id === 'run_tests_junit');
       const uploadStep = steps.find((step) => step.id === 'upload_junit_artifact');
+      const smokeFlowStep = steps.find((step) => step.id === 'smoke_flow');
       const insightsStep = steps.find((step) => step.id === 'insights_onboarding');
 
       expect(validateStep?.shell).toBe('bash');
@@ -364,8 +369,9 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(repoSyncStep?.uses).toBe('postman-cs/postman-repo-sync-action@v2.5.0');
       expect(junitStep?.shell).toBe('bash');
       expect(uploadStep?.uses).toBe('actions/upload-artifact@v7.0.1');
+      expect(smokeFlowStep?.uses).toBe('postman-cs/postman-smoke-flow-action@v2.2.0');
       expect(insightsStep?.uses).toBe('postman-cs/postman-insights-onboarding-action@v2.3.0');
-      for (const step of [bootstrapStep, repoSyncStep, insightsStep]) {
+      for (const step of [bootstrapStep, repoSyncStep, smokeFlowStep, insightsStep]) {
         expect(step?.uses).not.toMatch(/@(main|v0)$/);
       }
     });
@@ -405,7 +411,7 @@ describe('postman-api-onboarding-action composite contract', () => {
     it('resolves one branch decision before validation and every child invocation', () => {
       const manifest = loadManifest();
       expect(manifest.runs.steps[0]?.id).toBe('branch_decision');
-      for (const id of ['bootstrap', 'repo_sync', 'insights_onboarding']) {
+      for (const id of ['bootstrap', 'repo_sync', 'smoke_flow', 'insights_onboarding']) {
         expect(manifest.runs.steps.find((step) => step.id === id)?.env?.POSTMAN_BRANCH_DECISION).toBe('${{ steps.branch_decision.outputs.branch-decision }}');
       }
     });
@@ -415,8 +421,9 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(manifest.inputs['branch-strategy']?.default).toBe('legacy');
       const bootstrap = manifest.runs.steps.find((step) => step.id === 'bootstrap');
       const repoSync = manifest.runs.steps.find((step) => step.id === 'repo_sync');
+      const smokeFlow = manifest.runs.steps.find((step) => step.id === 'smoke_flow');
       const insights = manifest.runs.steps.find((step) => step.id === 'insights_onboarding');
-      for (const child of [bootstrap, repoSync, insights]) {
+      for (const child of [bootstrap, repoSync, smokeFlow, insights]) {
         expect(child?.with?.['branch-strategy']).toBe('${{ inputs.branch-strategy }}');
         expect(child?.with?.['canonical-branch']).toBe('${{ inputs.canonical-branch }}');
         expect(child?.with?.channels).toBe('${{ inputs.channels }}');
@@ -430,21 +437,47 @@ describe('postman-api-onboarding-action composite contract', () => {
       const manifest = loadManifest();
       const bootstrap = manifest.runs.steps.find((step) => step.id === 'bootstrap');
       const repoSync = manifest.runs.steps.find((step) => step.id === 'repo_sync');
+      const smokeFlow = manifest.runs.steps.find((step) => step.id === 'smoke_flow');
       const insights = manifest.runs.steps.find((step) => step.id === 'insights_onboarding');
       expect(bootstrap?.with?.['postman-api-key']).toContain("tier != 'gated'");
       expect(bootstrap?.with?.['postman-access-token']).toContain("tier != 'gated'");
       expect(repoSync?.if).toContain("tier != 'gated'");
+      expect(smokeFlow?.if).toContain("tier != 'gated'");
       expect(insights?.if).toContain("tier != 'gated'");
     });
 
-    it('invokes bootstrap, repo-sync, and insights exactly once in that order', () => {
+    it('invokes bootstrap, repo-sync, smoke-flow, and insights exactly once in that order', () => {
       const childIds = loadManifest()
         .runs.steps.map((step) => step.id)
         .filter(
           (id): id is string =>
-            id === 'bootstrap' || id === 'repo_sync' || id === 'insights_onboarding'
+            id === 'bootstrap' ||
+            id === 'repo_sync' ||
+            id === 'smoke_flow' ||
+            id === 'insights_onboarding'
         );
-      expect(childIds).toEqual(['bootstrap', 'repo_sync', 'insights_onboarding']);
+      expect(childIds).toEqual(['bootstrap', 'repo_sync', 'smoke_flow', 'insights_onboarding']);
+    });
+
+    it('smoke-flow step is conditional on flow-path and forwards bootstrap asset IDs', () => {
+      const manifest = loadManifest();
+      const smokeFlow = manifest.runs.steps.find((s) => s.id === 'smoke_flow');
+      expect(smokeFlow?.if).toContain('flow-path');
+      expect(smokeFlow?.if).toContain("!= ''");
+      expect(smokeFlow?.with?.['flow-path']).toBe('${{ inputs.flow-path }}');
+      expect(smokeFlow?.with?.['workspace-id']).toBe('${{ steps.bootstrap.outputs.workspace-id }}');
+      expect(smokeFlow?.with?.['spec-id']).toBe('${{ steps.bootstrap.outputs.spec-id }}');
+      expect(smokeFlow?.with?.['smoke-collection-id']).toBe(
+        '${{ steps.bootstrap.outputs.smoke-collection-id }}'
+      );
+      expect(smokeFlow?.with?.['team-id']).toBe('${{ inputs.postman-team-id }}');
+      expect(manifest.inputs['flow-path']?.default).toBe('');
+      expect(manifest.outputs['flow-apply-status']?.value).toBe(
+        '${{ steps.smoke_flow.outputs.flow-apply-status }}'
+      );
+      expect(manifest.outputs['smoke-flow-outcome']?.value).toBe(
+        '${{ steps.smoke_flow.outcome }}'
+      );
     });
 
     it('insights step is conditional on enable-insights', () => {
@@ -568,6 +601,9 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(
         manifest.runs.steps.find((step) => step.id === 'repo_sync')?.uses
       ).toBe('postman-cs/postman-repo-sync-action@v2.5.0');
+      expect(
+        manifest.runs.steps.find((step) => step.id === 'smoke_flow')?.uses
+      ).toBe('postman-cs/postman-smoke-flow-action@v2.2.0');
       expect(
         manifest.runs.steps.find((step) => step.id === 'insights_onboarding')?.uses
       ).toBe('postman-cs/postman-insights-onboarding-action@v2.3.0');

@@ -11,6 +11,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const requiredPins = [
   { repo: 'postman-bootstrap-action', stepId: 'bootstrap' },
   { repo: 'postman-repo-sync-action', stepId: 'repo_sync' },
+  { repo: 'postman-smoke-flow-action', stepId: 'smoke_flow' },
   { repo: 'postman-insights-onboarding-action', stepId: 'insights_onboarding' }
 ];
 

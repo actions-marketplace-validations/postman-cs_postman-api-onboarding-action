@@ -205,6 +205,15 @@ inputs:
     description: Commit author email for generated sync commits.
     required: false
     default: support@postman.com
+  flow-path:
+    description: |
+      Optional repo-root-relative path to a curated smoke flow.yaml manifest.
+      When set, the composite chains postman-cs/postman-smoke-flow-action after
+      repo sync to reshape the canonical Smoke collection from the manifest
+      before the built-in smoke and contract test run. Leave empty (default) to
+      skip the smoke-flow step entirely.
+    required: false
+    default: ''
   enable-insights:
     description: Whether to enable Postman Insights.
     required: false
@@ -298,12 +307,21 @@ outputs:
   spec-version-url:
     description: Read-only URL for the canonical Spec Hub version finalized by repo-sync.
     value: ${{ steps.repo_sync.outputs.spec-version-url }}
+  flow-apply-status:
+    description: Smoke-flow apply result status (empty when flow-path is unset).
+    value: ${{ steps.smoke_flow.outputs.flow-apply-status }}
+  flow-apply-summary-json:
+    description: JSON summary of curated smoke-flow application results and warnings (empty when flow-path is unset).
+    value: ${{ steps.smoke_flow.outputs.flow-apply-summary-json }}
   bootstrap-outcome:
     description: GitHub Actions runner outcome for the bootstrap step.
     value: ${{ steps.bootstrap.outcome }}
   repo-sync-outcome:
     description: GitHub Actions runner outcome for the repo sync step.
     value: ${{ steps.repo_sync.outcome }}
+  smoke-flow-outcome:
+    description: GitHub Actions runner outcome for the smoke-flow step (skipped when flow-path is unset).
+    value: ${{ steps.smoke_flow.outcome }}
   insights-outcome:
     description: GitHub Actions runner outcome for the Insights onboarding step.
     value: ${{ steps.insights_onboarding.outcome }}
@@ -536,6 +554,27 @@ runs:
         spec-id: ${{ steps.bootstrap.outputs.spec-id }}
         spec-path: ${{ inputs.spec-path }}
         postman-stack: ${{ inputs.postman-stack }}
+    - id: smoke_flow
+      name: Apply curated Smoke flow
+      if: ${{ inputs.flow-path != '' && steps.branch_decision.outputs.tier != 'gated' }}
+      uses: postman-cs/postman-smoke-flow-action@v2.2.0
+      env:
+        POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
+        POSTMAN_BRANCH_DECISION: ${{ steps.branch_decision.outputs.branch-decision }}
+      with:
+        project-name: ${{ inputs.project-name }}
+        workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
+        spec-id: ${{ steps.bootstrap.outputs.spec-id }}
+        smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
+        flow-path: ${{ inputs.flow-path }}
+        spec-path: ${{ inputs.spec-path }}
+        postman-api-key: ${{ inputs.postman-api-key }}
+        postman-access-token: ${{ inputs.postman-access-token }}
+        postman-region: ${{ inputs.postman-region }}
+        team-id: ${{ inputs.postman-team-id }}
+        branch-strategy: ${{ inputs.branch-strategy }}
+        canonical-branch: ${{ inputs.canonical-branch }}
+        channels: ${{ inputs.channels }}
     - id: warn_tests_skipped_no_api_key
       name: Warn when built-in tests are skipped because no Postman API key is present
       # D2: the built-in test step authenticates the Postman CLI with

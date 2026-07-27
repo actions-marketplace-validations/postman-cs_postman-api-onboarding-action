@@ -291,6 +291,7 @@ The hook only attaches `x-api-key` for `*.mock.pstmn.io` hosts, so it stays iner
 | `current-ref` | Explicit ref override for detached checkout push semantics. | no |  |
 | `committer-name` | Commit author name for generated sync commits. | no | `Postman` |
 | `committer-email` | Commit author email for generated sync commits. | no | `support@postman.com` |
+| `flow-path` | Optional repo-root-relative path to a curated smoke flow.yaml manifest. When set, the composite chains postman-cs/postman-smoke-flow-action after repo sync to reshape the canonical Smoke collection from the manifest before the built-in smoke and contract test run. Leave empty (default) to skip the smoke-flow step entirely. | no |  |
 | `enable-insights` | Whether to enable Postman Insights. | no | `false` |
 | `skip-built-in-tests` | When 'true', skip the built-in smoke and contract Postman CLI test run and JUnit artifact upload that normally happen inside this action. Set this to 'true' when the caller workflow needs to perform additional post-onboarding setup (e.g. bearer-token injection, mTLS bootstrap, vault-hydrated secrets, dynamic env enrichment) before the smoke and contract suites can authenticate successfully, and will run the tests itself afterward. Default 'false' preserves existing behavior for all current callers. | no | `false` |
 | `cluster-name` | Insights cluster name passed to the downstream Insights onboarding step. | no |  |
@@ -325,8 +326,11 @@ Tables are generated from `action.yml` by `npm run docs:tables`.
 | `commit-sha` | Commit SHA produced by repo-write-mode. |
 | `sync-status` | Branch-aware sync status, including skipped-branch-gate for credential-free gated runs. |
 | `spec-version-url` | Read-only URL for the canonical Spec Hub version finalized by repo-sync. |
+| `flow-apply-status` | Smoke-flow apply result status (empty when flow-path is unset). |
+| `flow-apply-summary-json` | JSON summary of curated smoke-flow application results and warnings (empty when flow-path is unset). |
 | `bootstrap-outcome` | GitHub Actions runner outcome for the bootstrap step. |
 | `repo-sync-outcome` | GitHub Actions runner outcome for the repo sync step. |
+| `smoke-flow-outcome` | GitHub Actions runner outcome for the smoke-flow step (skipped when flow-path is unset). |
 | `insights-outcome` | GitHub Actions runner outcome for the Insights onboarding step. |
 | `insights-status` | Insights onboarding status (success, not-found, error, or empty if insights disabled). |
 | `insights-verification-token` | Team verification token for Insights DaemonSet configuration. |
@@ -338,11 +342,12 @@ Tables are generated from `action.yml` by `npm run docs:tables`.
 
 ## How it works
 
-This is a composite action, the primary partner-facing entrypoint of the Postman onboarding suite. It chains three sibling actions in order:
+This is a composite action, the primary partner-facing entrypoint of the Postman onboarding suite. It chains up to four sibling actions in order:
 
 1. **Bootstrap** (`postman-cs/postman-bootstrap-action`) creates or reuses the workspace, uploads the spec to [Spec Hub](https://learning.postman.com/docs/design-apis/specifications/overview/), and [generates](https://learning.postman.com/docs/design-apis/specifications/generate-collections/) baseline, smoke, and contract collections.
 2. **Repo sync** (`postman-cs/postman-repo-sync-action`) exports [Postman Collection v3](https://learning.postman.com/docs/use/use-collections/collections-schemas/) multi-file YAML artifacts into the repository, materializes environments, registers the mock server and smoke monitor, and optionally generates a CI workflow. Bootstrap outputs are explicitly mapped into repo-sync inputs in `action.yml`.
-3. **Insights** (`postman-cs/postman-insights-onboarding-action`, only when `enable-insights: true`) links [Postman Insights](https://learning.postman.com/docs/insights/overview/) discovered services to the workspace.
+3. **Smoke flow** (`postman-cs/postman-smoke-flow-action`, only when `flow-path` is set) reshapes the canonical Smoke collection from a curated `flow.yaml` manifest before the built-in test run.
+4. **Insights** (`postman-cs/postman-insights-onboarding-action`, only when `enable-insights: true`) links [Postman Insights](https://learning.postman.com/docs/insights/overview/) discovered services to the workspace.
 
 ```mermaid
 flowchart TB
@@ -350,14 +355,14 @@ flowchart TB
     AWS["aws-spec-discovery<br/>optional spec source"] -.->|"spec-url / spec-path"| COMP
     subgraph COMP["postman-api-onboarding-action (composite)"]
         B["bootstrap<br/>workspace + spec + collections<br/>+ injected contract tests"] --> RS["repo-sync<br/>artifacts, environments, mocks,<br/>monitors, CI workflow"]
-        RS --> T["built-in smoke + contract run<br/>Postman CLI, JUnit artifact"]
+        RS --> SF["smoke-flow<br/>curated flow.yaml<br/>flow-path set"]
+        SF --> T["built-in smoke + contract run<br/>Postman CLI, JUnit artifact"]
         T --> INS["insights linking<br/>enable-insights: true"]
     end
-    B -.->|"workspace-id / spec-id /<br/>smoke-collection-id"| SF["smoke-flow<br/>curated flow.yaml"]
     RS --> CI["generated CI workflow<br/>reruns both collections<br/>on push and schedule"]
 ```
 
-`resolve-service-token`, `aws-spec-discovery`, and `smoke-flow` are standalone steps that feed the composite's inputs or consume its outputs; they are not invoked from inside it.
+`resolve-service-token` and `aws-spec-discovery` are standalone steps that feed the composite's inputs; they are not invoked from inside it. `smoke-flow` runs inside the composite when `flow-path` is set, and remains usable standalone against the composite's outputs.
 
 Between repo sync and Insights, the action runs the generated smoke and contract collections with the [Postman CLI](https://learning.postman.com/docs/postman-cli/postman-cli-collections/) and uploads [JUnit results](https://learning.postman.com/docs/postman-cli/postman-cli-reporters/) as a workflow artifact (skippable via `skip-built-in-tests`). Inputs are backend-neutral and kebab-case. Full contract details, output mapping, and phase outcome semantics are in [docs/contract.md](docs/contract.md).
 

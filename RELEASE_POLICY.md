@@ -82,6 +82,7 @@ The composite action currently depends on:
 
 - `postman-cs/postman-bootstrap-action@v2.12.0`
 - `postman-cs/postman-repo-sync-action@v2.5.0`
+- `postman-cs/postman-smoke-flow-action@v2.2.0` when `flow-path` is set
 - `postman-cs/postman-insights-onboarding-action@v2.3.0` when Insights is enabled
 
 Because these are immutable sibling pins, a consumer who pins `postman-api-onboarding-action` to an immutable tag gets a reproducible lower-level action set at runtime.
@@ -103,12 +104,13 @@ Release from the bottom up:
 
 1. Release `postman-bootstrap-action` if it changed.
 2. Release `postman-repo-sync-action` if it changed.
-3. Release `postman-insights-onboarding-action` if it changed.
-4. Verify the published tags, CI status, and GitHub releases for every changed lower-level action.
-5. Review `postman-api-onboarding-action`:
+3. Release `postman-smoke-flow-action` if it changed.
+4. Release `postman-insights-onboarding-action` if it changed.
+5. Verify the published tags, CI status, and GitHub releases for every changed lower-level action.
+6. Review `postman-api-onboarding-action`:
    - Update `action.yml` to the exact lower-level release tags you want to bundle.
-6. Update `README.md`, this file, and any compatibility notes affected by the release.
-7. Release `postman-api-onboarding-action` last.
+7. Update `README.md`, this file, and any compatibility notes affected by the release.
+8. Release `postman-api-onboarding-action` last.
 
 ## Release checks
 
