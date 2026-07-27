@@ -8,18 +8,17 @@ import { parse } from 'yaml';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-const requiredPins = [
-  { repo: 'postman-bootstrap-action', stepId: 'bootstrap' },
-  { repo: 'postman-repo-sync-action', stepId: 'repo_sync' },
-  { repo: 'postman-smoke-flow-action', stepId: 'smoke_flow' },
-  { repo: 'postman-insights-onboarding-action', stepId: 'insights_onboarding' }
-];
-
-// Siblings are pinned to reviewed immutable tags of the composite's own major.
-// Release eligibility must depend only on committed pins, not on a mutable
+// Siblings are pinned to reviewed immutable tags of the major recorded here.
+// Majors diverge across the suite (smoke-flow shipped v3 while the other
+// siblings remain on v2), so each expected major is committed beside its pin.
+// Release eligibility must depend only on committed content, not on a mutable
 // "latest tag" query that can change after the composite commit is reviewed.
-const compositeVersion = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version;
-const compositeMajor = Number(String(compositeVersion).split('.')[0]);
+const requiredPins = [
+  { repo: 'postman-bootstrap-action', stepId: 'bootstrap', major: 2 },
+  { repo: 'postman-repo-sync-action', stepId: 'repo_sync', major: 2 },
+  { repo: 'postman-smoke-flow-action', stepId: 'smoke_flow', major: 3 },
+  { repo: 'postman-insights-onboarding-action', stepId: 'insights_onboarding', major: 2 }
+];
 
 function semverForMajor(tag, major) {
   const match = tag.match(/^v(\d+)\.(\d+)\.(\d+)$/);
@@ -53,15 +52,15 @@ async function fetchSiblingInputs(repo, tag) {
   return new Set(Object.keys(sibling.inputs ?? {}));
 }
 
-for (const { repo, stepId } of requiredPins) {
+for (const { repo, stepId, major } of requiredPins) {
   const step = manifest.runs.steps.find((candidate) => candidate.id === stepId);
   const actual = step?.uses;
   const prefix = 'postman-cs/' + repo + '@';
   const tag = typeof actual === 'string' && actual.startsWith(prefix)
     ? actual.slice(prefix.length)
     : '';
-  if (!semverForMajor(tag, compositeMajor)) {
-    failures.push(stepId + ': expected an immutable v' + compositeMajor + ' tag, found ' + (actual || '<missing>'));
+  if (!semverForMajor(tag, major)) {
+    failures.push(stepId + ': expected an immutable v' + major + ' tag, found ' + (actual || '<missing>'));
     continue;
   }
   if (!tagExists(repo, tag)) {
@@ -84,4 +83,4 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('Composite sibling pins are existing immutable v' + compositeMajor + ' tags and every forwarded with-key is a declared sibling input.');
+console.log('Composite sibling pins are existing immutable tags of their recorded majors and every forwarded with-key is a declared sibling input.');
