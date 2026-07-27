@@ -211,9 +211,28 @@ inputs:
       When set, the composite chains postman-cs/postman-smoke-flow-action after
       repo sync to reshape the canonical Smoke collection from the manifest
       before the built-in smoke and contract test run. Leave empty (default) to
-      skip the smoke-flow step entirely.
+      skip the smoke-flow step unless flow-mode requests it.
     required: false
     default: ''
+  flow-mode:
+    description: |
+      Optional flow selection policy forwarded to postman-cs/postman-smoke-flow-action.
+      Set to auto to run the smoke-flow step without a curated manifest: it
+      derives a deterministic smoke flow from spec-path (create before read,
+      output-to-input bindings resolved by provenance). Set to curated to
+      require flow-path, or off to refresh the canonical Smoke collection
+      without curation. Leave empty (default) to run the smoke-flow step only
+      when flow-path is set, preserving the pre-flow-mode contract.
+    required: false
+    default: ''
+  flow-allow-delete:
+    description: |
+      Whether a derived smoke flow may include DELETE operations whose
+      identifiers are proven to originate from the same run's create steps.
+      Forwarded to postman-cs/postman-smoke-flow-action; ignored for curated
+      manifests. Defaults to false.
+    required: false
+    default: 'false'
   enable-insights:
     description: Whether to enable Postman Insights.
     required: false
@@ -308,10 +327,10 @@ outputs:
     description: Read-only URL for the canonical Spec Hub version finalized by repo-sync.
     value: ${{ steps.repo_sync.outputs.spec-version-url }}
   flow-apply-status:
-    description: Smoke-flow apply result status (empty when flow-path is unset).
+    description: Smoke-flow apply result status (empty when the smoke-flow step did not run).
     value: ${{ steps.smoke_flow.outputs.flow-apply-status }}
   flow-apply-summary-json:
-    description: JSON summary of curated smoke-flow application results and warnings (empty when flow-path is unset).
+    description: JSON summary of smoke-flow application results and warnings (empty when the smoke-flow step did not run).
     value: ${{ steps.smoke_flow.outputs.flow-apply-summary-json }}
   bootstrap-outcome:
     description: GitHub Actions runner outcome for the bootstrap step.
@@ -320,7 +339,7 @@ outputs:
     description: GitHub Actions runner outcome for the repo sync step.
     value: ${{ steps.repo_sync.outcome }}
   smoke-flow-outcome:
-    description: GitHub Actions runner outcome for the smoke-flow step (skipped when flow-path is unset).
+    description: GitHub Actions runner outcome for the smoke-flow step (skipped when neither flow-path nor flow-mode is set).
     value: ${{ steps.smoke_flow.outcome }}
   insights-outcome:
     description: GitHub Actions runner outcome for the Insights onboarding step.
@@ -556,8 +575,8 @@ runs:
         postman-stack: ${{ inputs.postman-stack }}
     - id: smoke_flow
       name: Apply curated Smoke flow
-      if: ${{ inputs.flow-path != '' && steps.branch_decision.outputs.tier != 'gated' }}
-      uses: postman-cs/postman-smoke-flow-action@v2.2.0
+      if: ${{ (inputs.flow-path != '' || inputs.flow-mode != '') && steps.branch_decision.outputs.tier != 'gated' }}
+      uses: postman-cs/postman-smoke-flow-action@v2.3.0
       env:
         POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
         POSTMAN_BRANCH_DECISION: ${{ steps.branch_decision.outputs.branch-decision }}
@@ -567,6 +586,8 @@ runs:
         spec-id: ${{ steps.bootstrap.outputs.spec-id }}
         smoke-collection-id: ${{ steps.bootstrap.outputs.smoke-collection-id }}
         flow-path: ${{ inputs.flow-path }}
+        flow-mode: ${{ inputs.flow-mode == '' && 'auto' || inputs.flow-mode }}
+        flow-allow-delete: ${{ inputs.flow-allow-delete }}
         spec-path: ${{ inputs.spec-path }}
         postman-api-key: ${{ inputs.postman-api-key }}
         postman-access-token: ${{ inputs.postman-access-token }}

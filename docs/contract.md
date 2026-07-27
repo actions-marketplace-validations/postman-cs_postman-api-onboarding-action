@@ -19,7 +19,7 @@ The composite action wires:
 - Runner-level phase outcomes are exposed as `bootstrap-outcome`, `repo-sync-outcome`, `smoke-flow-outcome`, and `insights-outcome` from step outcomes (`success`, `failure`, `cancelled`, or `skipped`).
 - Existing-service passthrough inputs to `bootstrap`: `workspace-id`, `spec-id`, `baseline-collection-id`, `smoke-collection-id`, and `contract-collection-id`.
 - Existing-repo passthrough inputs to `repo_sync`: `generate-ci-workflow`, `ci-workflow-path`, and `spec-path`.
-- When `flow-path` is set, the smoke-flow step runs after repo sync, forwarding `workspace-id`, `spec-id`, and `smoke-collection-id` from bootstrap to reshape the canonical Smoke collection from the curated manifest before the built-in test run; `flow-apply-status` and `flow-apply-summary-json` surface its domain result.
+- When `flow-path` or `flow-mode` is set, the smoke-flow step runs after repo sync, forwarding `workspace-id`, `spec-id`, and `smoke-collection-id` from bootstrap to reshape the canonical Smoke collection before the built-in test run: from the curated manifest when `flow-path` is set, otherwise derived deterministically from `spec-path` under `flow-mode: auto`. `flow-apply-status` and `flow-apply-summary-json` surface its domain result.
 - When `enable-insights: true`, the Insights onboarding step runs after repo sync using the workspace ID from bootstrap plus the first environment from `environments-json` for `environment-id` and `system-env-map-json` lookup.
 - Insights domain outputs (`insights-status`, `insights-verification-token`, `insights-application-id`, `insights-discovered-service-id`, `insights-discovered-service-name`, `insights-collection-id`) are surfaced when `enable-insights: true`.
 - `insights-status` remains the domain result from `steps.insights_onboarding.outputs.status`, while `insights-outcome` is the GitHub Actions step outcome for that phase.
@@ -32,7 +32,7 @@ The composite action exposes runner-level outcome outputs for each phase so you 
 
 - `bootstrap-outcome`: Bootstrap phase outcome (`success`, `failure`, `cancelled`, or `skipped`)
 - `repo-sync-outcome`: Repo sync phase outcome (`success`, `failure`, `cancelled`, or `skipped`)
-- `smoke-flow-outcome`: Smoke-flow phase outcome (`success`, `failure`, `cancelled`, or `skipped`; skipped if `flow-path` is unset)
+- `smoke-flow-outcome`: Smoke-flow phase outcome (`success`, `failure`, `cancelled`, or `skipped`; skipped if neither `flow-path` nor `flow-mode` is set)
 - `insights-outcome`: Insights onboarding phase outcome (`success`, `failure`, `cancelled`, or `skipped`; skipped if `enable-insights: false`)
 
 These are distinct from `insights-status`, which carries the domain result from the Insights action itself (e.g. `success`, `not-found`, `error`). See [protected-branch-workflows.md](protected-branch-workflows.md) for how phase outcomes support partial-success recovery in protected repos.

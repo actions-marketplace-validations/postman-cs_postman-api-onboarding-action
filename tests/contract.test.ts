@@ -235,6 +235,8 @@ describe('postman-api-onboarding-action composite contract', () => {
         'committer-name',
         'committer-email',
         'flow-path',
+        'flow-mode',
+        'flow-allow-delete',
         'enable-insights',
         'skip-built-in-tests',
         'cluster-name',
@@ -369,7 +371,7 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(repoSyncStep?.uses).toBe('postman-cs/postman-repo-sync-action@v2.5.0');
       expect(junitStep?.shell).toBe('bash');
       expect(uploadStep?.uses).toBe('actions/upload-artifact@v7.0.1');
-      expect(smokeFlowStep?.uses).toBe('postman-cs/postman-smoke-flow-action@v2.2.0');
+      expect(smokeFlowStep?.uses).toBe('postman-cs/postman-smoke-flow-action@v2.3.0');
       expect(insightsStep?.uses).toBe('postman-cs/postman-insights-onboarding-action@v2.3.0');
       for (const step of [bootstrapStep, repoSyncStep, smokeFlowStep, insightsStep]) {
         expect(step?.uses).not.toMatch(/@(main|v0)$/);
@@ -459,12 +461,19 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(childIds).toEqual(['bootstrap', 'repo_sync', 'smoke_flow', 'insights_onboarding']);
     });
 
-    it('smoke-flow step is conditional on flow-path and forwards bootstrap asset IDs', () => {
+    it('smoke-flow step is conditional on flow-path or flow-mode and forwards bootstrap asset IDs', () => {
       const manifest = loadManifest();
       const smokeFlow = manifest.runs.steps.find((s) => s.id === 'smoke_flow');
       expect(smokeFlow?.if).toContain('flow-path');
+      expect(smokeFlow?.if).toContain('flow-mode');
       expect(smokeFlow?.if).toContain("!= ''");
       expect(smokeFlow?.with?.['flow-path']).toBe('${{ inputs.flow-path }}');
+      expect(smokeFlow?.with?.['flow-mode']).toBe(
+        "${{ inputs.flow-mode == '' && 'auto' || inputs.flow-mode }}"
+      );
+      expect(smokeFlow?.with?.['flow-allow-delete']).toBe('${{ inputs.flow-allow-delete }}');
+      expect(manifest.inputs['flow-mode']?.default).toBe('');
+      expect(manifest.inputs['flow-allow-delete']?.default).toBe('false');
       expect(smokeFlow?.with?.['workspace-id']).toBe('${{ steps.bootstrap.outputs.workspace-id }}');
       expect(smokeFlow?.with?.['spec-id']).toBe('${{ steps.bootstrap.outputs.spec-id }}');
       expect(smokeFlow?.with?.['smoke-collection-id']).toBe(
@@ -603,7 +612,7 @@ describe('postman-api-onboarding-action composite contract', () => {
       ).toBe('postman-cs/postman-repo-sync-action@v2.5.0');
       expect(
         manifest.runs.steps.find((step) => step.id === 'smoke_flow')?.uses
-      ).toBe('postman-cs/postman-smoke-flow-action@v2.2.0');
+      ).toBe('postman-cs/postman-smoke-flow-action@v2.3.0');
       expect(
         manifest.runs.steps.find((step) => step.id === 'insights_onboarding')?.uses
       ).toBe('postman-cs/postman-insights-onboarding-action@v2.3.0');
