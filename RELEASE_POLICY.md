@@ -80,7 +80,7 @@ immutable tag, or force-push. Until these prerequisites close, do not publish v3
 
 The composite action currently depends on:
 
-- `postman-cs/postman-bootstrap-action@v2.13.6`
+- `postman-cs/postman-bootstrap-action@v2.13.7`
 - `postman-cs/postman-repo-sync-action@v2.6.8`
 - `postman-cs/postman-smoke-flow-action@v3.1.0` when `flow-path` or `flow-mode` is set
 - `postman-cs/postman-insights-onboarding-action@v2.3.0` when Insights is enabled
