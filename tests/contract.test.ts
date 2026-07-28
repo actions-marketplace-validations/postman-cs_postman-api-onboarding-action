@@ -370,7 +370,7 @@ describe('postman-api-onboarding-action composite contract', () => {
 
       expect(validateStep?.shell).toBe('bash');
       expect(bootstrapStep?.uses).toBe('postman-cs/postman-bootstrap-action@v2.13.6');
-      expect(repoSyncStep?.uses).toBe('postman-cs/postman-repo-sync-action@v2.6.6');
+      expect(repoSyncStep?.uses).toBe('postman-cs/postman-repo-sync-action@v2.6.7');
       expect(junitStep?.shell).toBe('bash');
       expect(uploadStep?.uses).toBe('actions/upload-artifact@v7.0.1');
       expect(smokeFlowStep?.uses).toBe('postman-cs/postman-smoke-flow-action@v3.1.0');
@@ -611,7 +611,7 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(bootstrapStep?.uses).toBe('postman-cs/postman-bootstrap-action@v2.13.6');
       expect(
         manifest.runs.steps.find((step) => step.id === 'repo_sync')?.uses
-      ).toBe('postman-cs/postman-repo-sync-action@v2.6.6');
+      ).toBe('postman-cs/postman-repo-sync-action@v2.6.7');
       expect(
         manifest.runs.steps.find((step) => step.id === 'smoke_flow')?.uses
       ).toBe('postman-cs/postman-smoke-flow-action@v3.1.0');
