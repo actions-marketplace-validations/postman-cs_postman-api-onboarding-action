@@ -437,6 +437,16 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(manifest.outputs['spec-version-url']?.value).toBe('${{ steps.repo_sync.outputs.spec-version-url }}');
     });
 
+    it('forwards bootstrap spec-content-changed to repo-sync so a no-op canonical sync never tags a spec version', () => {
+      // Regression: repo-sync defaults a missing spec-content-changed input to
+      // true, so dropping this forwarding published a Spec Hub version tag on
+      // every no-op canonical sync.
+      const repoSync = loadManifest().runs.steps.find((step) => step.id === 'repo_sync');
+      expect(repoSync?.with?.['spec-content-changed']).toBe(
+        '${{ steps.bootstrap.outputs.spec-content-changed }}'
+      );
+    });
+
     it('runs gated bootstrap without credentials and skips credentialed children', () => {
       const manifest = loadManifest();
       const bootstrap = manifest.runs.steps.find((step) => step.id === 'bootstrap');

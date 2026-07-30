@@ -614,6 +614,7 @@ runs:
         ssl-client-passphrase: ${{ inputs.ssl-client-passphrase }}
         ssl-extra-ca-certs: ${{ inputs.ssl-extra-ca-certs }}
         spec-id: ${{ steps.bootstrap.outputs.spec-id }}
+        spec-content-changed: ${{ steps.bootstrap.outputs.spec-content-changed }}
         spec-path: ${{ inputs.spec-path }}
         postman-stack: ${{ inputs.postman-stack }}
     - id: warn_tests_skipped_no_api_key
