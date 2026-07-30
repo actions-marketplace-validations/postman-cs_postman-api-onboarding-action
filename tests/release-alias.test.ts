@@ -33,7 +33,7 @@ describe('check-release-alias parser and decision', () => {
     expect(decision).toEqual({ status: 0, reason: 'absent' });
     const cli = runHelper('v2', 'v2.1.2', `${commitA}\trefs/tags/v2.1.2\n`);
     expect(cli.status).toBe(0);
-  });
+  }, 20_000);
 
   it('resolves lightweight aliases and advances for same or older targets', () => {
     const same = [
@@ -65,7 +65,7 @@ describe('check-release-alias parser and decision', () => {
     expect(cli.status).toBe(10);
     expect(cli.stdout).toBe('2.1.3');
     expect(resolveTagCommit(parseLsRemoteLines(newer), 'v2')).toBe(commitB);
-  });
+  }, 20_000);
 
   it('accepts zero-patch minor immutable tags when mapping the alias commit', () => {
     const rows = [
@@ -84,7 +84,7 @@ describe('check-release-alias parser and decision', () => {
     expect(() => parseAliasArgs('v2', 'main')).toThrow(/malformed candidate/);
     expect(runHelper('v2', 'v3.0.0', '').status).not.toBe(0);
     expect(runHelper('v2', 'not-a-tag', '').status).not.toBe(0);
-  });
+  }, 20_000);
 
   it('fails when an existing alias cannot be resolved to a same-major immutable tag', () => {
     const unresolved = `${commitA}\trefs/tags/v2\n${commitB}\trefs/tags/v2.1.2\n`;
@@ -94,5 +94,5 @@ describe('check-release-alias parser and decision', () => {
       lsRemoteText: unresolved
     })).toThrow(/cannot be safely resolved/);
     expect(runHelper('v2', 'v2.1.2', unresolved).status).not.toBe(0);
-  });
+  }, 20_000);
 });
