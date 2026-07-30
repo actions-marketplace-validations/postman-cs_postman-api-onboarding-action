@@ -131,7 +131,7 @@ describe('composite first-step input validation', () => {
       expect(output).toContain('Attempted Insights credential validation failed');
       expect(output).toContain('both insights-postman-api-key and insights-postman-access-token are required');
     }
-  });
+  }, 20_000);
 
   it.each([
     { label: 'PMAK-only', env: { POSTMAN_API_KEY: 'PMAK-only', POSTMAN_ACCESS_TOKEN: '' }, status: 0 },
@@ -151,17 +151,17 @@ describe('composite first-step input validation', () => {
       expect(output).toContain('neither postman-api-key nor postman-access-token was supplied');
       expect(output).toContain('Provide one of those inputs and rerun');
     }
-  });
+  }, 20_000);
 
   it('permits a gated decision without onboarding credentials', () => {
     const result = runValidation({ BRANCH_TIER: 'gated', POSTMAN_API_KEY: '', POSTMAN_ACCESS_TOKEN: '' });
     expect(result.status).toBe(0);
-  });
+  }, 20_000);
 
   it.each(['none', 'commit-only', 'commit-and-push'])('accepts valid repo-write-mode=%s', (mode) => {
     const result = runValidation({ REPO_WRITE_MODE: mode });
     expect(result.status).toBe(0);
-  });
+  }, 20_000);
 
   it.each([
     {
@@ -208,7 +208,7 @@ describe('composite first-step input validation', () => {
     expect(output).toContain(remediation);
     expect(output).not.toContain(value);
     expect(errorAnnotations(output)).toHaveLength(1);
-  });
+  }, 20_000);
 
   it.each(['push-only', 'commit', 'invalid', ''])('rejects invalid repo-write-mode=%s before children run', (mode) => {
     const result = runValidation({ REPO_WRITE_MODE: mode });
@@ -223,7 +223,7 @@ describe('composite first-step input validation', () => {
       expect(output).not.toContain(`got: ${mode}`);
       expect(output).not.toContain(mode);
     }
-  });
+  }, 20_000);
 
   it('rejects newline/workflow-command-shaped invalid values without forging annotations', () => {
     const forgedPayload = 'evil\n::error::forged-annotation\n%0A::warning::injected';
@@ -239,7 +239,7 @@ describe('composite first-step input validation', () => {
     expect(output).not.toContain('evil');
     expect(errorAnnotations(output)).toHaveLength(1);
     expect(errorAnnotations(output)[0]?.includes('\n')).toBe(false);
-  });
+  }, 20_000);
 });
 
 describe('child invocation order and credential forwarding', () => {

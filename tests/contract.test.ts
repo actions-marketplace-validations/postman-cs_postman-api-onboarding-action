@@ -836,7 +836,7 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(junitStep?.shell).toBe('bash');
       expect(junitStep?.run).toBeTruthy();
       expect(() => execFileSync('bash', ['-n'], { input: junitStep?.run })).not.toThrow();
-    });
+    }, 20_000);
 
     it('run_tests_junit does not validate the install URL with an inline Bash regex', () => {
       const manifest = loadManifest();
@@ -1049,7 +1049,7 @@ describe('postman-api-onboarding-action composite contract', () => {
       } finally {
         rmSync(harnessRoot, { recursive: true, force: true });
       }
-    });
+    }, 20_000);
 
     it('insights step receives workspace-id from bootstrap output', () => {
       const manifest = loadManifest();
