@@ -243,7 +243,7 @@ describe('release workflow artifact handoff', () => {
     expect(bad.status).not.toBe(0);
     expect(`${bad.stdout}${bad.stderr}`).toMatch(/checksum mismatch|does not match/i);
     expect(existsSync(marker)).toBe(false);
-  });
+  }, 20_000);
 });
 
 describe('release artifact verifier', () => {

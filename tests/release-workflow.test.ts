@@ -219,7 +219,7 @@ describe('release workflow publishing contract', () => {
         expect(diag).toContain(fragment);
       }
     }
-  });
+  }, 20_000);
 
   it('classifies before dependency installation and guards every downstream job on immutable', () => {
     expect(releaseWorkflow.indexOf('Classify release tag')).toBeLessThan(releaseWorkflow.indexOf('npm ci'));

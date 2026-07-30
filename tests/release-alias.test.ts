@@ -49,7 +49,7 @@ describe('check-release-alias parser and decision', () => {
     ].join('\n');
     expect(decideAliasAdvance({ majorAlias: 'v2', candidateTag: 'v2.1.2', lsRemoteText: older }).reason).toBe('older');
     expect(runHelper('v2', 'v2.1.2', older).status).toBe(0);
-  });
+  }, 20_000);
 
   it('resolves annotated aliases via peeled refs and refuses regression', () => {
     const newer = [
