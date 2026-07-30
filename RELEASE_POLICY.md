@@ -80,12 +80,25 @@ immutable tag, or force-push. Until these prerequisites close, do not publish v3
 
 The composite action currently depends on:
 
-- `postman-cs/postman-bootstrap-action@v2.13.7`
+- `postman-cs/postman-bootstrap-action@v2.13.8`
 - `postman-cs/postman-repo-sync-action@v2.6.8`
-- `postman-cs/postman-smoke-flow-action@v3.1.0` when `flow-path` or `flow-mode` is set
+- `postman-cs/postman-smoke-flow-action@v3.1.1` when `flow-path` or `flow-mode` is set
 - `postman-cs/postman-insights-onboarding-action@v2.3.0` when Insights is enabled
 
 Because these are immutable sibling pins, a consumer who pins `postman-api-onboarding-action` to an immutable tag gets a reproducible lower-level action set at runtime.
+
+### Automatic pin advance
+
+`.github/workflows/advance-pins.yml` keeps these pins at the newest released
+tag of each pin's recorded major. It runs on a `sibling-release` repository
+dispatch from sibling Release runs, on a daily cron backstop, and on manual
+dispatch. `scripts/advance-pins.mjs` rewrites every pin literal (manifest,
+contract tests, README, this file), then the workflow validates the result with
+`scripts/check-sibling-pins.mjs` and the full test suite before pushing to
+`main`, where Auto Release cuts the composite release. Majors never advance
+automatically; crossing a major stays a reviewed change. Direct push requires a
+`SIBLING_PIN_TOKEN` secret able to bypass main's review requirement; without
+it the workflow opens a pull request instead.
 
 ### Composite release rule
 

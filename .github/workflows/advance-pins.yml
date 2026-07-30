@@ -1,0 +1,93 @@
+name: Advance Sibling Pins
+
+# Advances the immutable sibling pins in action.yml (and their mirrored
+# literals in the contract tests, README, and RELEASE_POLICY) to the newest
+# released tag of each pin's recorded major, then hands the commit to Auto
+# Release, which cuts the composite release. Majors never move here: crossing
+# a major boundary stays a reviewed change per RELEASE_POLICY.md.
+#
+# Triggers: sibling repos dispatch `sibling-release` after a successful
+# Release run (requires SIBLING_PIN_TOKEN there); a daily cron backstop
+# covers missed or token-less dispatches; manual dispatch for on-demand runs.
+#
+# With a SIBLING_PIN_TOKEN secret that can bypass main's review requirement,
+# the bump lands directly on main and releases with no human in the loop.
+# Without it the push falls back to a ready-to-review pull request.
+
+on:
+  repository_dispatch:
+    types: [sibling-release]
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: advance-pins-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  advance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          token: ${{ secrets.SIBLING_PIN_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+
+      - name: Advance pins
+        id: advance
+        run: |
+          set -euo pipefail
+          node scripts/advance-pins.mjs
+          if git diff --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Sibling pins are already current; nothing to advance."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate advanced pins
+        if: steps.advance.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          node scripts/check-sibling-pins.mjs
+          npm test
+
+      - name: Commit and push
+        if: steps.advance.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SIBLING_PIN_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add action.yml tests/contract.test.ts RELEASE_POLICY.md README.md
+          git commit -m "fix(deps): advance sibling pins to the latest released tags"
+          if git push origin HEAD:main; then
+            echo "::notice::Pin advance pushed to main; Auto Release will cut the composite release."
+            exit 0
+          fi
+          # Protected main without a bypass token: carry the bump on a PR so a
+          # reviewer can land it. CI is dispatched explicitly because
+          # GITHUB_TOKEN-created pull requests do not emit pull_request runs.
+          BRANCH="chore/advance-sibling-pins-$(date -u +%Y%m%d%H%M%S)"
+          git push origin "HEAD:refs/heads/${BRANCH}"
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "fix(deps): advance sibling pins to the latest released tags" \
+            --body "Automated sibling pin advance. Opened by advance-pins.yml because main requires review and no SIBLING_PIN_TOKEN bypass is configured."
+          gh workflow run ci.yml --ref "$BRANCH"
