@@ -7,12 +7,14 @@ name: Advance Sibling Pins
 # a major boundary stays a reviewed change per RELEASE_POLICY.md.
 #
 # Triggers: sibling repos dispatch `sibling-release` after a successful
-# Release run (requires SIBLING_PIN_TOKEN there); a daily cron backstop
+# Release run (via the postman-suite-pin-bot App); a daily cron backstop
 # covers missed or token-less dispatches; manual dispatch for on-demand runs.
 #
-# With a SIBLING_PIN_TOKEN secret that can bypass main's review requirement,
-# the bump lands directly on main and releases with no human in the loop.
-# Without it the push falls back to a ready-to-review pull request.
+# The postman-suite-pin-bot GitHub App mints a one-hour installation token
+# scoped to this repo for the push. When the App can bypass main's review
+# requirement, the bump lands directly on main and releases with no human in
+# the loop. Without bypass (or without App secrets) the push falls back to a
+# ready-to-review pull request.
 
 on:
   repository_dispatch:
@@ -36,10 +38,20 @@ jobs:
       pull-requests: write
       actions: write
     steps:
+      - name: Mint repo-scoped App token
+        id: app-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SUITE_PIN_BOT_APP_ID }}
+          private-key: ${{ secrets.SUITE_PIN_BOT_PRIVATE_KEY }}
+          owner: postman-cs
+          repositories: postman-api-onboarding-action
+
       - uses: actions/checkout@v7
         with:
           ref: main
-          token: ${{ secrets.SIBLING_PIN_TOKEN || github.token }}
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - uses: actions/setup-node@v7
         with:
@@ -69,18 +81,18 @@ jobs:
       - name: Commit and push
         if: steps.advance.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.SIBLING_PIN_TOKEN || github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "postman-suite-pin-bot[bot]"
+          git config user.email "311553872+postman-suite-pin-bot[bot]@users.noreply.github.com"
           git add action.yml tests/contract.test.ts RELEASE_POLICY.md README.md
           git commit -m "fix(deps): advance sibling pins to the latest released tags"
           if git push origin HEAD:main; then
             echo "::notice::Pin advance pushed to main; Auto Release will cut the composite release."
             exit 0
           fi
-          # Protected main without a bypass token: carry the bump on a PR so a
+          # Protected main without bypass: carry the bump on a PR so a
           # reviewer can land it. CI is dispatched explicitly because
           # GITHUB_TOKEN-created pull requests do not emit pull_request runs.
           BRANCH="chore/advance-sibling-pins-$(date -u +%Y%m%d%H%M%S)"
@@ -89,5 +101,5 @@ jobs:
             --base main \
             --head "$BRANCH" \
             --title "fix(deps): advance sibling pins to the latest released tags" \
-            --body "Automated sibling pin advance. Opened by advance-pins.yml because main requires review and no SIBLING_PIN_TOKEN bypass is configured."
+            --body "Automated sibling pin advance. Opened by advance-pins.yml because main requires review and the pin bot App cannot bypass it."
           gh workflow run ci.yml --ref "$BRANCH"

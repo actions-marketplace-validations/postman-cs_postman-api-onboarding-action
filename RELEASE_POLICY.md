@@ -96,9 +96,11 @@ dispatch. `scripts/advance-pins.mjs` rewrites every pin literal (manifest,
 contract tests, README, this file), then the workflow validates the result with
 `scripts/check-sibling-pins.mjs` and the full test suite before pushing to
 `main`, where Auto Release cuts the composite release. Majors never advance
-automatically; crossing a major stays a reviewed change. Direct push requires a
-`SIBLING_PIN_TOKEN` secret able to bypass main's review requirement; without
-it the workflow opens a pull request instead.
+automatically; crossing a major stays a reviewed change. The push authenticates
+as the `postman-suite-pin-bot` GitHub App (org-owned, installed on the five
+suite repos), which mints a one-hour installation token per run and is allowed
+to bypass main's review requirement; without a usable App token the workflow
+opens a pull request instead.
 
 ### Composite release rule
 
