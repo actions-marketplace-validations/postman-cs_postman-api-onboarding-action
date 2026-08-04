@@ -11,10 +11,11 @@ name: Advance Sibling Pins
 # covers missed or token-less dispatches; manual dispatch for on-demand runs.
 #
 # The postman-suite-pin-bot GitHub App mints a one-hour installation token
-# scoped to this repo for the push. When the App can bypass main's review
-# requirement, the bump lands directly on main and releases with no human in
-# the loop. Without bypass (or without App secrets) the push falls back to a
-# ready-to-review pull request.
+# scoped to this repo. The direct HEAD:main push attempts only when that token
+# is minted and non-empty; a GITHUB_TOKEN push would succeed at the git layer
+# but cannot trigger Auto Release, so it is never used for main. When the App
+# token is absent or the push fails, the workflow falls back to a
+# ready-to-review pull request opened with github.token.
 
 on:
   repository_dispatch:
@@ -81,19 +82,29 @@ jobs:
       - name: Commit and push
         if: steps.advance.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.name "postman-suite-pin-bot[bot]"
           git config user.email "311553872+postman-suite-pin-bot[bot]@users.noreply.github.com"
           git add action.yml tests/contract.test.ts RELEASE_POLICY.md README.md
           git commit -m "fix(deps): advance sibling pins to the latest released tags"
-          if git push origin HEAD:main; then
-            echo "::notice::Pin advance pushed to main; Auto Release will cut the composite release."
-            exit 0
+          # Direct main push requires the App token: a GITHUB_TOKEN push to main
+          # may succeed at the git layer but does not trigger Auto Release, so a
+          # pin commit pushed without the bot App can remain unreleased on main.
+          # Only attempt the direct push when the App token was minted.
+          if [ -n "$APP_TOKEN" ]; then
+            if git push origin HEAD:main; then
+              echo "::notice::Pin advance pushed to main; Auto Release will cut the composite release."
+              exit 0
+            fi
+            echo "::notice::App-backed push to main failed; opening a pull request instead."
+          else
+            echo "::notice::No App token minted; skipping direct main push for review and opening a pull request instead."
           fi
-          # Protected main without bypass: carry the bump on a PR so a
-          # reviewer can land it. CI is dispatched explicitly because
+          # Protected main without bypass, or no App token: carry the bump on a
+          # PR so a reviewer can land it. CI is dispatched explicitly because
           # GITHUB_TOKEN-created pull requests do not emit pull_request runs.
           BRANCH="chore/advance-sibling-pins-$(date -u +%Y%m%d%H%M%S)"
           git push origin "HEAD:refs/heads/${BRANCH}"
