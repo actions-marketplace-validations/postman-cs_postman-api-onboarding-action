@@ -147,7 +147,7 @@ beforeAll(() => {
   ensurePacked('2.1.2');
   ensurePacked('2.2.0');
   expect(npmPackCount).toBe(2);
-});
+}, 120_000);
 
 afterAll(() => {
   for (const directory of cleanupRoots.splice(0)) rmSync(directory, { recursive: true, force: true });

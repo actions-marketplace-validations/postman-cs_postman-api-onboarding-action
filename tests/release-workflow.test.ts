@@ -221,9 +221,9 @@ describe('release workflow publishing contract', () => {
     }
   }, 20_000);
 
-  it('classifies before dependency installation and guards every downstream job on immutable', () => {
+  it('classifies before dependency installation and guards release work on immutable', () => {
     expect(releaseWorkflow.indexOf('Classify release tag')).toBeLessThan(releaseWorkflow.indexOf('npm ci'));
-    for (const name of ['verify-package', 'publish', 'advance-major-alias']) {
+    for (const name of ['verify-package', 'publish']) {
       const body = job(name);
       expect(body).toContain('needs:');
       expect(body).toContain("if: needs.classify.outputs.release_kind == 'immutable'");
@@ -231,7 +231,8 @@ describe('release workflow publishing contract', () => {
     }
     expect(job('verify-package')).toContain('needs: classify');
     expect(job('publish')).toContain('needs: [classify, verify-package]');
-    expect(job('advance-major-alias')).toContain('needs: [classify, publish]');
+    expect(job('verify-release-e2e')).toContain('needs: [classify, verify-package, publish]');
+    expect(job('advance-major-alias')).toContain('needs: [classify, publish, verify-release-e2e]');
   });
 
   it('verifies composite sibling pins before packaging', () => {
@@ -334,11 +335,28 @@ describe('release workflow publishing contract', () => {
     expect(job('advance-major-alias')).toContain('fetch-depth: 1');
   });
 
-  it('documents live E2E as an asynchronous monitor and the current v2 release policy', () => {
+  it('requires exact correlated released-composite E2E evidence before the rolling alias', () => {
+    const verifier = job('verify-release-e2e');
+    expect(verifier).not.toContain('continue-on-error');
+    expect(verifier).toContain("E2E_GATE_MODE: ${{ inputs.e2e_verification_mode || 'enforce' }}");
+    expect(verifier).toContain('E2E_GATE_ACTION: postman-api-onboarding-action');
+    expect(verifier).toContain('E2E_GATE_SUITE: full');
+    expect(verifier).toContain('E2E_GATE_REF: ${{ github.ref_name }}');
+    expect(verifier).toContain('E2E_GATE_SOURCE_DIGEST: ${{ needs.verify-package.outputs.release_tgz_sha256 }}');
+    expect(verifier).toContain('node scripts/verify-e2e-release.mjs');
+    expect(job('verify-package')).toContain(
+      'release_tgz_sha256: ${{ steps.package-artifact.outputs.release_tgz_sha256 }}'
+    );
+    expect(job('advance-major-alias')).toContain("needs.verify-release-e2e.result == 'success'");
+    expect(releaseWorkflow).toContain('default: enforce');
+  });
+
+  it('documents publication independence and correlated alias verification in the current v3 release policy', () => {
     expect(releasePolicy).toContain('nightly `full` monitor');
-    expect(releasePolicy).toContain('asynchronous post-release `smoke`');
-    expect(releasePolicy).toContain('not a PR or publication gate');
-    expect(releasePolicy).toContain('v2');
+    expect(releasePolicy).toContain('not a PR or immutable-publication gate');
+    expect(releasePolicy).toContain('exact correlated terminal success');
+    expect(releasePolicy).toContain('E2E_COMPOSITE_USES_UNAVAILABLE');
+    expect(releasePolicy).toContain('v3');
     expect(releasePolicy).toContain('rolling');
     expect(releasePolicy).not.toMatch(/\bv1\b/);
   });

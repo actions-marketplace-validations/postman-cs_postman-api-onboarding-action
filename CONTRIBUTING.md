@@ -27,15 +27,12 @@ npm run lint        # ESLint
 
 ## Release E2E Status
 
-This repo is not directly blocked by the central live release e2e gate in Phase
-1. The current `postman-actions-e2e` pipeline exercises the lower-level
-`resolve-service-token`, `bootstrap`, `repo-sync`, and `smoke-flow` CLI actions;
-it does not yet run the composite action as the released artifact.
-
-Do not describe a composite release as live-e2e-gated until the harness includes
-real composite coverage and this repo's release workflow waits on that gate.
-Follow `RELEASE_POLICY.md` for the current bottom-up release order and record
-the lower-level gated release evidence when updating composite pins.
+The `onboarding-e2e` harness executes this composite natively
+(`uses: ./postman-api-onboarding-action`) from an exact released tag on
+release-triggered runs. This repo's release workflow waits on exact correlated
+terminal E2E success before advancing the rolling major alias. Nightly scheduled
+runs exercise the default branch. Follow `RELEASE_POLICY.md` for bottom-up
+release order when updating composite pins.
 
 ## Commit Messages
 

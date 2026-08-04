@@ -25,8 +25,9 @@ It applies to these repositories:
 - The composite action references sibling actions through immutable release tags in `action.yml`.
 - Immutable release identity is derived from the repository `package.json` version at the tagged commit:
   exact `vX.Y.Z`, plus `vX.Y` when the patch component is `0`.
-- The current consumer rolling channel for this composite is `v2`.
-- Every v2 release keeps `branch-strategy` defaulted to `legacy`. The next default-flip major is v3.
+- The current consumer rolling channel for this composite is `v3`.
+- Every v3 release keeps `branch-strategy` defaulted to `legacy`; the
+  `publish-gate` default flip remains deferred/opt-in rather than shipped.
 - The public release contract is the git tag and GitHub release. Do not treat `package.json` version fields as the authoritative public release identifier by themselves.
 
 ## Source of truth
@@ -44,7 +45,7 @@ Do not duplicate full input and output tables across repositories. Link to the a
 
 - Immutable release tags are version-derived (`vX.Y.Z`, and `vX.Y` only when patch is `0`).
   These tags are never rewritten or force-pushed.
-- The moving `v2` tag is the current rolling consumer channel for this composite.
+- The moving `v3` tag is the current rolling consumer channel for this composite.
   Rolling aliases are deliberately movable and may be force-updated forward only;
   they must never regress to an older immutable version.
 - Immutable release tags have a corresponding GitHub release with generated notes;
@@ -52,29 +53,25 @@ Do not duplicate full input and output tables across repositories. Link to the a
 
 ## Consumer guidance
 
-- Use `@v2` in quick-start examples when the goal is a short marketplace install path.
-- Recommend immutable tags such as `@v2.x.y` for reproducible production workflows.
-- Treat `@v2` as a convenience channel; pin an immutable `@v2.x.y` tag or commit SHA when you need a reproducible reference.
+- Use `@v3` in quick-start examples when the goal is a short marketplace install path.
+- Recommend immutable tags such as `@v3.x.y` for reproducible production workflows.
+- Treat `@v3` as a convenience channel; pin an immutable `@v3.x.y` tag or commit SHA when you need a reproducible reference.
 - For security-sensitive environments, document that SHA pinning is the strongest option.
 
 ## Composite dependency policy
 
-### Branch-aware v2 contract and v3 rollout
+### Branch-aware v3 contract
 
-The v2 composite exposes `branch-strategy`, `canonical-branch`, `channels`, and
+The v3 composite exposes `branch-strategy`, `canonical-branch`, `channels`, and
 `preview-ttl`, resolves one `POSTMAN_BRANCH_DECISION` before every child, and
 surfaces `sync-status` and `spec-version-url`. Gated bootstrap receives empty
 credentials; repo-sync and Insights are skipped. There are no public migration knobs.
 
-The forward-only v3 contract is executable only after every branch-aware E2E
-gate in the PRD passes for org and non-org runs, including zero-mint/zero-write.
-Then release child v3 majors bottom-up; verify their immutable tags, releases,
-and CI; update this composite to major 3, pin those released immutable child
-tags, and flip only `branch-strategy` to `publish-gate`. After Linux, Windows,
-sibling-pin, actionlint, release, and security checks pass and the PR merges,
-create immutable v3 through the release workflow, verify npm/GitHub assets and
-checksums, and advance the new v3 alias forward. Never move v2, rewrite an
-immutable tag, or force-push. Until these prerequisites close, do not publish v3.
+The branch-aware v3 contract and bottom-up v3 child releases are shipped. This
+composite pins those released immutable child tags on the v3 channel, and the
+rolling `v3` alias advances after release checks pass. `branch-strategy`
+remains defaulted to `legacy`; consumers opt in to `publish-gate`. Never
+rewrite an immutable tag or force-push.
 
 ### Current rule
 
@@ -160,14 +157,16 @@ release workflow classifies a tag before installing dependencies, validates and
 packs in an unprivileged job, then publishes only checksummed staged artifacts in
 the privileged job. Trusted envelope verification establishes artifact identity
 and checksums before any packaged verifier code is extracted. npm publication
-(or SRI identity verification on retry) precedes the GitHub Release; the rolling
-`v2` alias advances only after that work and never regresses to an older
-immutable version.
+(or SRI identity verification on retry) precedes the GitHub Release. That
+immutable publication remains separate from live verification.
 
-Live sandbox E2E is not a PR or publication gate. The `onboarding-e2e` harness
-runs a nightly `full` monitor and receives asynchronous post-release `smoke`
-monitor dispatches for covered actions. Monitor failures remain observable but do
-not block merge, npm publication, GitHub Release creation, or rolling aliases.
+Live sandbox E2E is not a PR or immutable-publication gate. The `onboarding-e2e`
+harness runs a nightly `full` monitor. After an immutable release publishes, the
+release workflow requires an exact correlated terminal success before advancing
+the rolling `v3` alias. A manual `report-only` selection is the only explicit
+override; enforcement is the default. Verification fails closed with
+`E2E_COMPOSITE_USES_UNAVAILABLE` when a released composite `uses:` path is
+unavailable rather than claiming constituent-action coverage for the composite.
 
 ## Compatibility matrix
 
@@ -175,7 +174,7 @@ This matrix describes the current release model.
 
 | Composite reference used by consumers | Composite repository content | Lower-level dependency references | Result |
 | --- | --- | --- | --- |
-| `postman-api-onboarding-action@v2` | Rolling composite alias | Immutable sibling tags in the current composite content | Rolling composite channel with pinned siblings per composite revision |
+| `postman-api-onboarding-action@v3` | Rolling composite alias | Immutable sibling tags in the current composite content | Rolling composite channel with pinned siblings per composite revision |
 | Immutable composite release | Immutable composite repo tag | Immutable sibling tags | Fully reproducible |
 
 ## Marketplace documentation surface
@@ -198,9 +197,10 @@ Before pushing a new release tag:
 5. Confirm `SUPPORT.md` and `SECURITY.md` still match the current support and vulnerability-reporting paths.
 6. If lower-level actions changed behavior, verify whether the composite repo needs a coordinated release.
 7. Merge to `main` and let auto-release cut the immutable tag after gates pass.
-8. Confirm npm publication or matching SRI retry identity, then the matching
-   GitHub release and rolling alias update.
-9. Review asynchronous post-release monitor results when the action is covered.
+8. Confirm npm publication or matching SRI retry identity and the matching
+   GitHub release.
+9. Confirm exact correlated E2E terminal success before the rolling alias moves,
+   or record the explicit manual `report-only` override and blocker.
 
 ## What changes the policy
 
