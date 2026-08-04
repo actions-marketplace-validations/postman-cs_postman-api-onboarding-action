@@ -153,10 +153,10 @@ describe('auto-release workflow', () => {
     );
   });
 
-  it('recovers alias failures and resumes after a successful release', () => {
+  it('reconciles after every completed release, including failed E2E gates', () => {
     expect(autoReleaseWorkflow).toContain('workflow_run:');
     expect(autoReleaseWorkflow).toContain('workflows: [Release]');
-    expect(autoReleaseWorkflow).toContain("github.event.workflow_run.conclusion == 'success'");
+    expect(autoReleaseWorkflow).not.toContain('github.event.workflow_run.conclusion');
     expect(autoReleaseWorkflow).toContain('git rev-parse --verify "${ALIAS}^{commit}"');
   });
 

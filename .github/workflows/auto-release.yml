@@ -5,8 +5,8 @@ name: Auto Release
 # The tag is an OUTPUT of a passing run, never an input to one. release.yml
 # still triggers on `push: tags`, but nothing hand-pushes those tags any more:
 # this workflow creates a tag only after the exact bytes of the release commit
-# pass the full gate set. A failed cut therefore leaves no tag and burns no
-# version number, and the next merge to main retries the cut on a fresh one.
+# pass the package gate set. Every completed release is reconciled so a failed
+# E2E gate cannot strand a pending main commit behind its published tag.
 
 on:
   push:
@@ -26,7 +26,7 @@ concurrency:
 
 jobs:
   cut:
-    if: github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
