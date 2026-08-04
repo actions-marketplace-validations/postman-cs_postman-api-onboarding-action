@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  PIN_FILES,
   extractPins,
   latestImmutableForMajor,
   planAdvance,
@@ -110,12 +111,20 @@ describe('advance-pins workflow', () => {
     expect(advanceWorkflow).toContain('fix(deps): advance sibling pins');
   });
 
-  it('locks current real pins: bootstrap v2.17.1, smoke v3.3.1, repo-sync v2.8.7', () => {
+  it('rewrites and stages its own current-pin lock', () => {
+    expect(PIN_FILES).toContain('tests/advance-pins.test.ts');
+    expect(advanceWorkflow).toContain('tests/advance-pins.test.ts');
+  });
+
+  it('locks the current real sibling refs', () => {
     const pins = extractPins(actionManifest);
-    const byRepo = new Map(pins.map((pin) => [pin.repo, pin.tag]));
-    expect(byRepo.get('postman-bootstrap-action')).toBe('v2.17.1');
-    expect(byRepo.get('postman-smoke-flow-action')).toBe('v3.3.1');
-    expect(byRepo.get('postman-repo-sync-action')).toBe('v2.8.7');
+    const refs = pins.map(({ repo, tag }) => `postman-cs/${repo}@${tag}`).sort();
+    expect(refs).toEqual([
+      'postman-cs/postman-bootstrap-action@v2.17.1',
+      'postman-cs/postman-insights-onboarding-action@v2.4.1',
+      'postman-cs/postman-repo-sync-action@v2.8.7',
+      'postman-cs/postman-smoke-flow-action@v3.3.1'
+    ]);
   });
 
   it('gates direct main push on a non-empty App token so GITHUB_TOKEN cannot land unreleased pins', () => {
