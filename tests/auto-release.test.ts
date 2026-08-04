@@ -175,8 +175,24 @@ describe('auto-release workflow', () => {
   it('reconciles after every completed release, including failed E2E gates', () => {
     expect(autoReleaseWorkflow).toContain('workflow_run:');
     expect(autoReleaseWorkflow).toContain('workflows: [Release]');
-    expect(autoReleaseWorkflow).not.toContain('github.event.workflow_run.conclusion');
+    expect(autoReleaseWorkflow).not.toContain("github.event_name != 'workflow_run'");
     expect(autoReleaseWorkflow).toContain('git rev-parse --verify "${ALIAS}^{commit}"');
+  });
+
+  it('does not loop a failed release without a newer pending cut', () => {
+    expect(autoReleaseWorkflow).toContain(
+      "RELEASE_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}"
+    );
+    const stop = autoReleaseWorkflow.indexOf(
+      '[ -n "$RELEASE_CONCLUSION" ] && [ "$RELEASE_CONCLUSION" != success ]'
+    );
+    const activeRun = autoReleaseWorkflow.indexOf('gh run list --workflow release.yml');
+    expect(stop).toBeGreaterThan(-1);
+    expect(stop).toBeLessThan(activeRun);
+    expect(autoReleaseWorkflow).toContain('if [ "$PENDING_RELEASE" != true ]; then');
+    expect(autoReleaseWorkflow).toContain(
+      'Not retrying failed release $LATEST without a newer pending cut.'
+    );
   });
 
   it('lets a pending release supersede a stale rolling alias', () => {
