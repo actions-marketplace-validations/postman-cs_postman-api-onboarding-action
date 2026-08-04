@@ -30,7 +30,7 @@ Primary path: mint the token with [postman-resolve-service-token-action](https:/
     postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
     postman-region: us
 
-- uses: postman-cs/postman-api-onboarding-action@v2
+- uses: postman-cs/postman-api-onboarding-action@v3
   with:
     project-name: core-payments
     spec-url: https://raw.githubusercontent.com/postman-cs/postman-api-onboarding-action/main/examples/core-payments-openapi.yaml

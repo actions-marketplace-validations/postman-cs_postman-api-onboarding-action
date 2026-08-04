@@ -32,7 +32,7 @@ jobs:
           postman-region: us
 
       - id: onboard
-        uses: postman-cs/postman-api-onboarding-action@v2
+        uses: postman-cs/postman-api-onboarding-action@v3
         with:
           project-name: core-payments
           spec-url: https://raw.githubusercontent.com/postman-cs/postman-api-onboarding-action/main/examples/core-payments-openapi.yaml
@@ -101,7 +101,7 @@ The examples below include credential resolution when they need `postman-access-
     postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
     postman-region: us
 
-- uses: postman-cs/postman-api-onboarding-action@v2
+- uses: postman-cs/postman-api-onboarding-action@v3
   with:
     project-name: core-payments
     domain: core-banking
@@ -129,7 +129,7 @@ Target an existing workspace/spec/collection set and suppress generated CI workf
     postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
     postman-region: us
 
-- uses: postman-cs/postman-api-onboarding-action@v2
+- uses: postman-cs/postman-api-onboarding-action@v3
   with:
     project-name: core-payments
     workspace-id: ws-123
@@ -151,7 +151,7 @@ For repositories whose branch protection requires all changes to land through pu
 
 ```yaml
 - id: onboard
-  uses: postman-cs/postman-api-onboarding-action@v2
+  uses: postman-cs/postman-api-onboarding-action@v3
   with:
     project-name: core-payments
     spec-url: https://raw.githubusercontent.com/postman-cs/postman-api-onboarding-action/main/examples/core-payments-openapi.yaml
@@ -175,7 +175,7 @@ When `enable-insights: true`, the action chains `postman-cs/postman-insights-onb
     postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
     postman-region: us
 
-- uses: postman-cs/postman-api-onboarding-action@v2
+- uses: postman-cs/postman-api-onboarding-action@v3
   with:
     project-name: core-payments
     spec-url: https://raw.githubusercontent.com/postman-cs/postman-api-onboarding-action/main/examples/core-payments-openapi.yaml
@@ -205,7 +205,7 @@ Run AWS spec discovery before this composite action when the OpenAPI document sh
   uses: postman-cs/postman-aws-spec-discovery-action@v2
   with:
     aws-region: us-east-1
-- uses: postman-cs/postman-api-onboarding-action@v2
+- uses: postman-cs/postman-api-onboarding-action@v3
   with:
     project-name: core-payments
     spec-path: ${{ steps.discover-spec.outputs.spec-path }}
@@ -373,7 +373,7 @@ Between repo sync and Insights, the action runs the generated smoke and contract
 
 Running outside GitHub Actions (GitLab CI, Bitbucket Pipelines, Azure DevOps)? The bootstrap and repo-sync CLIs cover that: see [docs/non-github-ci.md](docs/non-github-ci.md).
 
-Releases use immutable `v2.x.y` tags with `v2` as the rolling release channel; pin an immutable tag for reproducibility. See [RELEASE_POLICY.md](RELEASE_POLICY.md).
+Releases use immutable `v3.x.y` tags with `v3` as the rolling release channel; pin an immutable tag for reproducibility. See [RELEASE_POLICY.md](RELEASE_POLICY.md).
 
 ## Resources
 
