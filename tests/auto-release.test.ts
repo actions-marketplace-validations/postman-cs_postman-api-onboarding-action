@@ -129,32 +129,25 @@ describe('auto-release workflow', () => {
     expect(autoReleaseWorkflow).not.toContain('HEAD:${GITHUB_REF_NAME}');
   });
 
-  it('starts or recovers release.yml after the tag push', () => {
+  it('resolves the release target after the tag push', () => {
     const push = autoReleaseWorkflow.indexOf('name: Push release tag');
-    const dispatch = autoReleaseWorkflow.indexOf('name: Start or recover release workflow');
-    expect(dispatch).toBeGreaterThan(push);
+    const resolve = autoReleaseWorkflow.indexOf('name: Resolve release target');
+    expect(resolve).toBeGreaterThan(push);
     expect(autoReleaseWorkflow).toContain('require(process.env.PLAN_FILE).previous');
     expect(autoReleaseWorkflow).toContain('gh release view "$TAG"');
-    expect(autoReleaseWorkflow).toContain('gh workflow run release.yml --ref "$TAG"');
   });
 
-  it('uses an App token so dispatched releases emit completion events', () => {
-    const token = autoReleaseWorkflow.indexOf('id: release-dispatch-token');
-    const reconcile = autoReleaseWorkflow.indexOf('name: Reconcile prior release');
-    expect(token).toBeGreaterThan(-1);
-    expect(token).toBeLessThan(reconcile);
-    expect(autoReleaseWorkflow).toContain('actions/create-github-app-token@');
-    expect(autoReleaseWorkflow).toContain('app-id: ${{ secrets.SUITE_PIN_BOT_APP_ID }}');
-    expect(autoReleaseWorkflow).toContain(
-      'private-key: ${{ secrets.SUITE_PIN_BOT_PRIVATE_KEY }}'
-    );
-    expect(autoReleaseWorkflow).toContain('repositories: postman-api-onboarding-action');
-    expect(
-      autoReleaseWorkflow.match(
-        /GH_TOKEN: \$\{\{ steps\.release-dispatch-token\.outputs\.token \}\}/g
-      )
-    ).toHaveLength(2);
-    expect(autoReleaseWorkflow).not.toContain('GH_TOKEN: ${{ github.token }}');
+  it('holds concurrency until the exact dispatched release completes', () => {
+    expect(autoReleaseWorkflow).not.toContain('actions/create-github-app-token@');
+    expect(autoReleaseWorkflow).toContain('GH_TOKEN: ${{ github.token }}');
+    const resolve = autoReleaseWorkflow.indexOf('name: Resolve release target');
+    const awaitRelease = autoReleaseWorkflow.indexOf('name: Dispatch or await release workflow');
+    expect(awaitRelease).toBeGreaterThan(resolve);
+    expect(autoReleaseWorkflow).toContain('BEFORE_ID="$(gh run list --workflow release.yml');
+    expect(autoReleaseWorkflow).toContain('gh workflow run release.yml --ref "$TAG"');
+    expect(autoReleaseWorkflow).toContain('gh run view "$RUN_ID" --json status,conclusion');
+    expect(autoReleaseWorkflow).toContain('if [ "$STATUS" = completed ]; then');
+    expect(autoReleaseWorkflow).toContain('Timed out waiting for Release $TAG');
   });
 
   it('reconciles the prior incomplete tag before planning another cut', () => {
@@ -200,6 +193,12 @@ describe('auto-release workflow', () => {
     expect(autoReleaseWorkflow).toContain('if [ "$PENDING_RELEASE" = true ]; then');
     expect(autoReleaseWorkflow).toContain('The pending release will supersede stale $ALIAS');
     expect(autoReleaseWorkflow).toContain('TAG="$LATEST"');
+  });
+
+  it('lets a pending cut supersede a tag that failed before publication', () => {
+    expect(autoReleaseWorkflow).toContain(
+      'The pending release will supersede unpublished $LATEST instead of retrying it.'
+    );
   });
 
   it('never cancels a cut in flight', () => {

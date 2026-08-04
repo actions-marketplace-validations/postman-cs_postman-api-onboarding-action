@@ -5,8 +5,8 @@ name: Auto Release
 # The tag is an OUTPUT of a passing run, never an input to one. release.yml
 # still triggers on `push: tags`, but nothing hand-pushes those tags any more:
 # this workflow creates a tag only after the exact bytes of the release commit
-# pass the package gate set. Every completed release is reconciled so a failed
-# E2E gate cannot strand a pending main commit behind its published tag.
+# pass the package gate set. The cut holds its concurrency slot until Release
+# settles, so main pushes during E2E queue and reconcile after the current tag.
 
 on:
   push:
@@ -37,19 +37,10 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Mint release dispatch App token
-        id: release-dispatch-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          app-id: ${{ secrets.SUITE_PIN_BOT_APP_ID }}
-          private-key: ${{ secrets.SUITE_PIN_BOT_PRIVATE_KEY }}
-          owner: postman-cs
-          repositories: postman-api-onboarding-action
-
       - name: Reconcile prior release
         id: reconcile
         env:
-          GH_TOKEN: ${{ steps.release-dispatch-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}
           ROLLING_ALIASES: major
         run: |
@@ -72,7 +63,13 @@ jobs:
 
           TAG=""
           if [ -n "$LATEST" ] && ! gh release view "$LATEST" >/dev/null 2>&1; then
-            TAG="$LATEST"
+            PENDING_RELEASE="$(node scripts/release-cut.mjs --plan |
+              node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).release === true")"
+            if [ "$PENDING_RELEASE" = true ]; then
+              echo "::notice::The pending release will supersede unpublished $LATEST instead of retrying it."
+            else
+              TAG="$LATEST"
+            fi
           elif [ -n "$LATEST" ]; then
             VERSION="${LATEST#v}"
             IFS='.' read -r MAJOR MINOR _ <<< "$VERSION"
@@ -100,27 +97,22 @@ jobs:
             fi
           fi
 
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if [ -n "$TAG" ] && [ -n "$RELEASE_CONCLUSION" ] && [ "$RELEASE_CONCLUSION" != success ]; then
             PENDING_RELEASE="$(node scripts/release-cut.mjs --plan |
               node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).release === true")"
             if [ "$PENDING_RELEASE" != true ]; then
               echo "::notice::Not retrying failed release $LATEST without a newer pending cut."
+              echo "tag=" >> "$GITHUB_OUTPUT"
               echo "blocked=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if [ -z "$TAG" ]; then
             echo "blocked=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "blocked=true" >> "$GITHUB_OUTPUT"
-          ACTIVE="$(gh run list --workflow release.yml --branch "$TAG" --limit 20 --json status --jq '[.[] | select(.status != "completed")] | length')"
-          if [ "$ACTIVE" -gt 0 ]; then
-            echo "::notice::Release $TAG is already queued or in progress."
-            exit 0
-          fi
-          gh workflow run release.yml --ref "$TAG"
 
       - uses: actions/setup-node@v7
         if: steps.reconcile.outputs.blocked != 'true'
@@ -167,11 +159,11 @@ jobs:
           set -euo pipefail
           git push origin "refs/tags/v${VERSION}"
 
-      - name: Start or recover release workflow
+      - name: Resolve release target
         id: release_target
         if: steps.reconcile.outputs.blocked != 'true'
         env:
-          GH_TOKEN: ${{ steps.release-dispatch-token.outputs.token }}
+          GH_TOKEN: ${{ github.token }}
           PLAN_FILE: ${{ runner.temp }}/plan.json
         run: |
           set -euo pipefail
@@ -181,18 +173,63 @@ jobs:
           else
             TAG="$(node -p "require(process.env.PLAN_FILE).previous || ''")"
           fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           if [ -z "$TAG" ]; then
             echo "::notice::No release tag is available to dispatch."
+            echo "tag=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "$RELEASE" != true ] && gh release view "$TAG" >/dev/null 2>&1; then
             echo "::notice::Release $TAG already exists; no recovery dispatch needed."
+            echo "tag=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # GITHUB_TOKEN tag pushes do not trigger workflows. On a rerun with
-          # no new cut, retry the latest tag when its GitHub release is absent.
-          gh workflow run release.yml --ref "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Hold the concurrency slot until Release settles. A main push arriving
+      # during E2E then queues behind this run and reconciles the final state.
+      - name: Dispatch or await release workflow
+        if: steps.reconcile.outputs.tag != '' || steps.release_target.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.reconcile.outputs.tag || steps.release_target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          RUN_ID="$(gh run list --workflow release.yml --branch "$TAG" --limit 20 \
+            --json databaseId,status,createdAt \
+            --jq '[.[] | select(.status != "completed")] | sort_by(.createdAt) | last | .databaseId // empty')"
+
+          if [ -z "$RUN_ID" ]; then
+            BEFORE_ID="$(gh run list --workflow release.yml --branch "$TAG" --limit 1 \
+              --json databaseId --jq '.[0].databaseId // 0')"
+            gh workflow run release.yml --ref "$TAG"
+            for _ in $(seq 1 30); do
+              LATEST_ID="$(gh run list --workflow release.yml --branch "$TAG" --limit 1 \
+                --json databaseId --jq '.[0].databaseId // 0')"
+              if [ "$LATEST_ID" != 0 ] && [ "$LATEST_ID" != "$BEFORE_ID" ]; then
+                RUN_ID="$LATEST_ID"
+                break
+              fi
+              sleep 2
+            done
+            if [ -z "$RUN_ID" ]; then
+              echo "::error::Release $TAG did not appear after dispatch."
+              exit 1
+            fi
+          else
+            echo "::notice::Release $TAG is already queued or in progress as run $RUN_ID."
+          fi
+
+          for _ in $(seq 1 180); do
+            ROW="$(gh run view "$RUN_ID" --json status,conclusion --jq '[.status, .conclusion] | @tsv')"
+            IFS=$'\t' read -r STATUS CONCLUSION <<< "$ROW"
+            if [ "$STATUS" = completed ]; then
+              echo "::notice::Release $TAG completed with ${CONCLUSION:-unknown} in run $RUN_ID."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Timed out waiting for Release $TAG run $RUN_ID."
+          exit 1
 
       - name: Report skipped cut
         if: steps.reconcile.outputs.blocked != 'true' && steps.plan.outputs.release != 'true'
