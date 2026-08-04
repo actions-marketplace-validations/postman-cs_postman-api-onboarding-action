@@ -12,13 +12,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 // Every file that carries an immutable sibling pin literal. action.yml is the
 // source of truth; the rest mirror it and are normalized on every run so docs
 // and contract tests can never drift from the manifest.
-export const PIN_FILES = [
-  'action.yml',
-  'tests/contract.test.ts',
-  'tests/advance-pins.test.ts',
-  'RELEASE_POLICY.md',
-  'README.md'
-];
+export const PIN_FILES = ['action.yml', 'tests/contract.test.ts', 'RELEASE_POLICY.md', 'README.md'];
 
 const USES_PIN = /uses:\s*postman-cs\/(postman-[a-z-]+-action)@(v\d+\.\d+\.\d+)/g;
 const IMMUTABLE_FULL = /^v(\d+)\.(\d+)\.(\d+)$/;

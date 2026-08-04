@@ -25,6 +25,7 @@ const advanceWorkflow = readFileSync(
   'utf8'
 ).replace(/\r\n/g, '\n');
 const actionManifest = readFileSync(join(repoRoot, 'action.yml'), 'utf8');
+const contractTests = readFileSync(join(repoRoot, 'tests/contract.test.ts'), 'utf8');
 
 describe('pin extraction', () => {
   it('extracts every immutable sibling pin from the real manifest', () => {
@@ -111,20 +112,12 @@ describe('advance-pins workflow', () => {
     expect(advanceWorkflow).toContain('fix(deps): advance sibling pins');
   });
 
-  it('rewrites and stages its own current-pin lock', () => {
-    expect(PIN_FILES).toContain('tests/advance-pins.test.ts');
-    expect(advanceWorkflow).toContain('tests/advance-pins.test.ts');
-  });
-
-  it('locks the current real sibling refs', () => {
+  it('keeps current real sibling refs in updater-owned contract tests', () => {
+    expect(PIN_FILES).toContain('tests/contract.test.ts');
     const pins = extractPins(actionManifest);
-    const refs = pins.map(({ repo, tag }) => `postman-cs/${repo}@${tag}`).sort();
-    expect(refs).toEqual([
-      'postman-cs/postman-bootstrap-action@v2.17.1',
-      'postman-cs/postman-insights-onboarding-action@v2.4.1',
-      'postman-cs/postman-repo-sync-action@v2.8.7',
-      'postman-cs/postman-smoke-flow-action@v3.3.1'
-    ]);
+    for (const { repo, tag } of pins) {
+      expect(contractTests).toContain(`postman-cs/${repo}@${tag}`);
+    }
   });
 
   it('gates direct main push on a non-empty App token so GITHUB_TOKEN cannot land unreleased pins', () => {
