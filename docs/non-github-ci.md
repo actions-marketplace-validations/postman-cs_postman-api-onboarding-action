@@ -24,17 +24,31 @@ POSTMAN_TEAM_ID=$(jq -r '.["team-id"]' postman-token.json)
 
 Use `POSTMAN_REGION=eu` for EU data residency and pass the same region to every Postman CLI in the pipeline.
 
+`POSTMAN_TEAM_ID` (from the resolver output above) is the parent/org
+integration id; it is never a squad id. Set `POSTMAN_WORKSPACE_TEAM_ID`
+independently to the numeric squad id when the PMAK's team is scoped under a
+Postman organization with multiple sub-teams; leave it unset otherwise. The two
+ids are distinct and are never interchangeable.
+
 Run bootstrap first and save its JSON output:
 
 ```bash
-postman-bootstrap \
-  --project-name "my-api" \
-  --spec-url "https://raw.githubusercontent.com/postman-cs/postman-api-onboarding-action/main/examples/core-payments-openapi.yaml" \
-  --postman-api-key "$POSTMAN_API_KEY" \
-  --postman-access-token "$POSTMAN_ACCESS_TOKEN" \
-  --postman-team-id "$POSTMAN_TEAM_ID" \
-  --postman-region "$POSTMAN_REGION" \
+# POSTMAN_WORKSPACE_TEAM_ID is optional; only set it for a multi-squad org.
+bootstrap_args=(
+  --project-name "my-api"
+  --spec-url "https://raw.githubusercontent.com/postman-cs/postman-api-onboarding-action/main/examples/core-payments-openapi.yaml"
+  --postman-api-key "$POSTMAN_API_KEY"
+  --postman-access-token "$POSTMAN_ACCESS_TOKEN"
+  --postman-team-id "$POSTMAN_TEAM_ID"
+  --postman-region "$POSTMAN_REGION"
   --result-json ./bootstrap-result.json
+)
+
+if [ -n "$POSTMAN_WORKSPACE_TEAM_ID" ]; then
+  bootstrap_args+=(--workspace-team-id "$POSTMAN_WORKSPACE_TEAM_ID")
+fi
+
+postman-bootstrap "${bootstrap_args[@]}"
 ```
 
 Extract the outputs you need from the JSON:
