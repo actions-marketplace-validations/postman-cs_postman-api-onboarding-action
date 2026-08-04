@@ -4,6 +4,15 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      e2e_verification_mode:
+        description: Enforce correlated E2E success before moving the rolling alias, or explicitly report-only.
+        required: true
+        type: choice
+        options:
+          - enforce
+          - report-only
+        default: enforce
 
 permissions:
   contents: read
@@ -55,6 +64,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      release_tgz_sha256: ${{ steps.package-artifact.outputs.release_tgz_sha256 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -83,11 +94,13 @@ jobs:
           while [ "${#pid[@]}" -gt 0 ]; do finish_one; done
           fail=0; for n in "${names[@]}"; do if [ "${result[$n]}" -eq 0 ]; then echo "gate:$n=pass"; else echo "gate:$n=fail"; fail=1; fi; done; for n in "${names[@]}"; do echo "::group::$n"; cat "$n.log"; echo '::endgroup::'; done; exit $fail
       - name: Package release artifact
+        id: package-artifact
         run: |
           set -euo pipefail
           npm pack --pack-destination .
           mv ./*.tgz release.tgz
           SHA256=$(shasum -a 256 release.tgz | awk '{print $1}')
+          echo "release_tgz_sha256=$SHA256" >> "$GITHUB_OUTPUT"
           SHA256="$SHA256" node -e "const fs=require('fs');const p=require('./package.json');fs.writeFileSync('release-manifest.json',JSON.stringify({schema_version:1,repository:process.env.GITHUB_REPOSITORY,commit_sha:process.env.GITHUB_SHA,tag:process.env.GITHUB_REF_NAME,package_name:p.name,package_version:p.version,artifacts:[{path:'release.tgz',sha256:process.env.SHA256}]},null,2))"
           node scripts/verify-release-artifacts.mjs .
       - uses: actions/upload-artifact@v7
@@ -178,9 +191,36 @@ jobs:
             release/release.tgz
             release/release-manifest.json
 
+  verify-release-e2e:
+    needs: [classify, verify-package, publish]
+    if: ${{ !cancelled() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      outcome: ${{ steps.verifier.outputs.e2e_outcome }}
+      correlation_id: ${{ steps.verifier.outputs.e2e_correlation_id }}
+      workflow_run_id: ${{ steps.verifier.outputs.e2e_workflow_run_id }}
+      run_url: ${{ steps.verifier.outputs.e2e_run_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Require real released-composite E2E and await exact correlated run
+        id: verifier
+        env:
+          E2E_DISPATCH_TOKEN: ${{ secrets.E2E_DISPATCH_TOKEN }}
+          E2E_GATE_MODE: ${{ inputs.e2e_verification_mode || 'enforce' }}
+          E2E_GATE_ACTION: postman-api-onboarding-action
+          E2E_GATE_SUITE: full
+          E2E_GATE_REF: ${{ github.ref_name }}
+          E2E_GATE_SOURCE_DIGEST: ${{ needs.verify-package.outputs.release_tgz_sha256 }}
+        run: node scripts/verify-e2e-release.mjs
+
   advance-major-alias:
-    needs: [classify, publish]
-    if: needs.classify.outputs.release_kind == 'immutable'
+    needs: [classify, publish, verify-release-e2e]
+    if: ${{ !cancelled() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' && needs.verify-release-e2e.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

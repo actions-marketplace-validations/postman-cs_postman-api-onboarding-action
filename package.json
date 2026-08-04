@@ -19,7 +19,7 @@
   },
   "scripts": {
     "prepare": "git config core.hooksPath .githooks",
-    "test": "vitest run",
+    "test": "vitest run && node --test scripts/verify-e2e-release.test.mjs",
     "docs:tables": "node scripts/render-action-tables.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint .",
