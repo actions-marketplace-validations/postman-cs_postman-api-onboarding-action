@@ -138,6 +138,25 @@ describe('auto-release workflow', () => {
     expect(autoReleaseWorkflow).toContain('gh workflow run release.yml --ref "$TAG"');
   });
 
+  it('uses an App token so dispatched releases emit completion events', () => {
+    const token = autoReleaseWorkflow.indexOf('id: release-dispatch-token');
+    const reconcile = autoReleaseWorkflow.indexOf('name: Reconcile prior release');
+    expect(token).toBeGreaterThan(-1);
+    expect(token).toBeLessThan(reconcile);
+    expect(autoReleaseWorkflow).toContain('actions/create-github-app-token@');
+    expect(autoReleaseWorkflow).toContain('app-id: ${{ secrets.SUITE_PIN_BOT_APP_ID }}');
+    expect(autoReleaseWorkflow).toContain(
+      'private-key: ${{ secrets.SUITE_PIN_BOT_PRIVATE_KEY }}'
+    );
+    expect(autoReleaseWorkflow).toContain('repositories: postman-api-onboarding-action');
+    expect(
+      autoReleaseWorkflow.match(
+        /GH_TOKEN: \$\{\{ steps\.release-dispatch-token\.outputs\.token \}\}/g
+      )
+    ).toHaveLength(2);
+    expect(autoReleaseWorkflow).not.toContain('GH_TOKEN: ${{ github.token }}');
+  });
+
   it('reconciles the prior incomplete tag before planning another cut', () => {
     const reconcile = autoReleaseWorkflow.indexOf('name: Reconcile prior release');
     const plan = autoReleaseWorkflow.indexOf('name: Plan release');
