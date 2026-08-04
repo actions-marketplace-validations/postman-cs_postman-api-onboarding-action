@@ -51,6 +51,16 @@ describe('Azure DevOps Windows onboarding template', () => {
     expect(source).toMatch(/onboarding-insights@\$\{\{ parameters\.insightsVersion \}\}/);
   });
 
+  it('defaults bootstrapVersion to the pinned immutable 2.17.1', () => {
+    const template = parse(readFileSync(templatePath, 'utf8'));
+    const param = template.parameters.find(
+      (p: { name: string }) => p.name === 'bootstrapVersion'
+    );
+    expect(param).toBeDefined();
+    expect(param.type).toBe('string');
+    expect(param.default).toBe('2.17.1');
+  });
+
   it('declares a workspaceTeamId parameter with an empty default', () => {
     const template = parse(readFileSync(templatePath, 'utf8'));
     const param = template.parameters.find(
@@ -83,5 +93,11 @@ describe('Azure DevOps Windows onboarding template', () => {
     expect(bootstrapStep.pwsh).not.toMatch(
       /--workspace-team-id',\s*\$env:POSTMAN_TEAM_ID/
     );
+
+    // The pinned bootstrap CLI default tracks the released bootstrap version.
+    const bootstrapParam = template.parameters.find(
+      (p: { name: string }) => p.name === 'bootstrapVersion'
+    );
+    expect(bootstrapParam.default).toBe('2.17.1');
   });
 });

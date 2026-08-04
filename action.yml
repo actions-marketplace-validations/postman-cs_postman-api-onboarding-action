@@ -502,7 +502,7 @@ runs:
       env:
         POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
         POSTMAN_BRANCH_DECISION: ${{ steps.branch_decision.outputs.branch-decision }}
-        # Bootstrap v2.15.0 reads this normalized env key through its exported
+        # Bootstrap v2.17.0 reads this normalized env key through its exported
         # getInput('repo-url') seam, while its action metadata does not declare a
         # nested with-key. Keep the composite input explicit without violating
         # the pinned child metadata contract.
