@@ -170,7 +170,7 @@ export function validateRunIdentity(run, expected) {
     throw new ReleaseVerificationError(
       'correlation_mismatch',
       `Workflow run does not match exact release correlation: ${mismatch.join(', ')}`,
-      { runId: run?.id ? String(run.id) : null }
+      { runId: run?.id ? String(run.id) : null, mismatch }
     );
   }
   return run;
@@ -354,6 +354,35 @@ export async function lookupCorrelatedRun({ config, expected, fetchImpl, now = D
   throw new ReleaseVerificationError('blocked', `No exact workflow run appeared for correlation ${expected.correlationId}`);
 }
 
+function isPendingRunTitle(error) {
+  const mismatch = error instanceof ReleaseVerificationError ? error.details?.mismatch : null;
+  return (
+    error?.code === 'correlation_mismatch' &&
+    Array.isArray(mismatch) &&
+    mismatch.length === 1 &&
+    mismatch[0] === 'action/ref/correlation/digest'
+  );
+}
+
+export async function waitForExactRunIdentity({ config, runId, expected, fetchRun: getRun, now = Date.now, sleep }) {
+  const deadline = now() + config.lookupTimeoutMs;
+  let delayMs = config.initialPollMs;
+  let titleError;
+  while (now() <= deadline) {
+    try {
+      return validateRunIdentity(await getRun(runId), { ...expected, runId });
+    } catch (error) {
+      if (!isPendingRunTitle(error)) throw error;
+      titleError = error;
+    }
+    const remaining = deadline - now();
+    if (remaining <= 0) break;
+    await sleep(Math.min(delayMs, remaining));
+    delayMs = Math.min(config.maxPollMs, delayMs * 2);
+  }
+  throw titleError;
+}
+
 export async function waitForTerminalRun({ config, runId, expected, fetchRun: getRun, now = Date.now, sleep }) {
   const deadline = now() + config.verificationTimeoutMs;
   let delayMs = config.initialPollMs;
@@ -455,9 +484,13 @@ export async function runReleaseVerificationCli(env = process.env, dependencies 
     const dispatchDetails = await dispatchWorkflow(config, fetchImpl);
     let run;
     if (dispatchDetails?.workflowRunId) {
-      run = validateRunIdentity(await fetchRun(config, fetchImpl, dispatchDetails.workflowRunId), {
-        ...expected,
-        runId: dispatchDetails.workflowRunId
+      run = await waitForExactRunIdentity({
+        config,
+        runId: dispatchDetails.workflowRunId,
+        expected,
+        fetchRun: (id) => fetchRun(config, fetchImpl, id),
+        now,
+        sleep
       });
     } else {
       run = await lookupCorrelatedRun({ config, expected, fetchImpl, now, sleep });

@@ -14,6 +14,7 @@ import {
   runReleaseVerificationCli,
   shouldFailRelease,
   validateRunIdentity,
+  waitForExactRunIdentity,
   waitForTerminalRun
 } from './verify-e2e-release.mjs';
 
@@ -141,6 +142,64 @@ test('run identity rejects ref, action, correlation, digest, and run-id mismatch
       (error) => error instanceof ReleaseVerificationError && error.code === 'correlation_mismatch'
     );
   }
+});
+
+test('exact dispatch waits for run-name propagation but rejects stable identity mismatches', async () => {
+  let clock = 0;
+  let calls = 0;
+  const exact = await waitForExactRunIdentity({
+    config: { lookupTimeoutMs: 10, initialPollMs: 2, maxPollMs: 4 },
+    runId: '77',
+    expected: EXPECTED,
+    fetchRun: async () => {
+      calls += 1;
+      return calls === 1
+        ? run({ display_title: 'e2e (live sandbox)', status: 'queued', conclusion: null })
+        : run({ status: 'queued', conclusion: null });
+    },
+    now: () => clock,
+    sleep: async (ms) => {
+      clock += ms;
+    }
+  });
+  assert.equal(exact.id, 77);
+  assert.equal(calls, 2);
+
+  calls = 0;
+  await assert.rejects(
+    () =>
+      waitForExactRunIdentity({
+        config: { lookupTimeoutMs: 10, initialPollMs: 2, maxPollMs: 4 },
+        runId: '77',
+        expected: EXPECTED,
+        fetchRun: async () => {
+          calls += 1;
+          return run({ head_branch: 'release' });
+        },
+        now: () => 0,
+        sleep: async () => {}
+      }),
+    (error) => error instanceof ReleaseVerificationError && error.code === 'correlation_mismatch'
+  );
+  assert.equal(calls, 1);
+});
+
+test('exact dispatch bounds run-name propagation waits', async () => {
+  let clock = 0;
+  await assert.rejects(
+    () =>
+      waitForExactRunIdentity({
+        config: { lookupTimeoutMs: 5, initialPollMs: 2, maxPollMs: 2 },
+        runId: '77',
+        expected: EXPECTED,
+        fetchRun: async () => run({ display_title: 'e2e (live sandbox)' }),
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        }
+      }),
+    (error) => error instanceof ReleaseVerificationError && error.code === 'correlation_mismatch'
+  );
 });
 
 test('terminal conclusions distinguish success, failure, cancelled, timed out, and blocked', () => {
