@@ -50,6 +50,7 @@ jobs:
         id: reconcile
         env:
           GH_TOKEN: ${{ steps.release-dispatch-token.outputs.token }}
+          RELEASE_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}
           ROLLING_ALIASES: major
         run: |
           set -euo pipefail
@@ -100,6 +101,15 @@ jobs:
           fi
 
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ -n "$TAG" ] && [ -n "$RELEASE_CONCLUSION" ] && [ "$RELEASE_CONCLUSION" != success ]; then
+            PENDING_RELEASE="$(node scripts/release-cut.mjs --plan |
+              node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).release === true")"
+            if [ "$PENDING_RELEASE" != true ]; then
+              echo "::notice::Not retrying failed release $LATEST without a newer pending cut."
+              echo "blocked=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
           if [ -z "$TAG" ]; then
             echo "blocked=false" >> "$GITHUB_OUTPUT"
             exit 0
