@@ -77,7 +77,13 @@ jobs:
                 esac
                 if ! ALIAS_COMMIT="$(git rev-parse --verify "${ALIAS}^{commit}" 2>/dev/null)" ||
                   [ "$ALIAS_COMMIT" != "$TARGET" ]; then
-                  TAG="$LATEST"
+                  PENDING_RELEASE="$(node scripts/release-cut.mjs --plan |
+                    node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).release === true")"
+                  if [ "$PENDING_RELEASE" = true ]; then
+                    echo "::notice::The pending release will supersede stale $ALIAS instead of retrying $LATEST."
+                  else
+                    TAG="$LATEST"
+                  fi
                   break
                 fi
               done

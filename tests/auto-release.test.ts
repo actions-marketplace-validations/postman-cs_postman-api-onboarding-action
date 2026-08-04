@@ -160,6 +160,13 @@ describe('auto-release workflow', () => {
     expect(autoReleaseWorkflow).toContain('git rev-parse --verify "${ALIAS}^{commit}"');
   });
 
+  it('lets a pending release supersede a stale rolling alias', () => {
+    expect(autoReleaseWorkflow).toContain('PENDING_RELEASE="$(node scripts/release-cut.mjs --plan');
+    expect(autoReleaseWorkflow).toContain('if [ "$PENDING_RELEASE" = true ]; then');
+    expect(autoReleaseWorkflow).toContain('The pending release will supersede stale $ALIAS');
+    expect(autoReleaseWorkflow).toContain('TAG="$LATEST"');
+  });
+
   it('never cancels a cut in flight', () => {
     expect(autoReleaseWorkflow).toContain('cancel-in-progress: false');
   });
