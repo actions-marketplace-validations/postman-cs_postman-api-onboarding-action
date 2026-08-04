@@ -351,6 +351,52 @@ describe('release workflow publishing contract', () => {
     expect(releaseWorkflow).toContain('default: enforce');
   });
 
+  it('mints a target-scoped App token for E2E dispatch instead of consuming a long-lived PAT secret', () => {
+    // The mint step uses the SHA-pinned create-github-app-token with suite App secrets
+    expect(releaseWorkflow).toContain(
+      'actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1'
+    );
+    expect(releaseWorkflow).toContain('app-id: ${{ secrets.SUITE_PIN_BOT_APP_ID }}');
+    expect(releaseWorkflow).toContain('private-key: ${{ secrets.SUITE_PIN_BOT_PRIVATE_KEY }}');
+    expect(releaseWorkflow).toContain('owner: postman-cs');
+    expect(releaseWorkflow).toContain('repositories: postman-actions-e2e');
+
+    const mintStep = namedStep('Mint composite release E2E dispatch App token');
+    expect(mintStep).toBeTruthy();
+    expect(mintStep).toContain(
+      'uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1'
+    );
+    expect(mintStep).toContain('app-id: ${{ secrets.SUITE_PIN_BOT_APP_ID }}');
+    expect(mintStep).toContain('private-key: ${{ secrets.SUITE_PIN_BOT_PRIVATE_KEY }}');
+    expect(mintStep).toContain('owner: postman-cs');
+    expect(mintStep).toContain('repositories: postman-actions-e2e');
+    // The mint step must NOT have continue-on-error so a mint failure is surfaced
+    expect(mintStep).not.toContain('continue-on-error');
+
+    // The minted token feeds the verifier as E2E_DISPATCH_TOKEN, not a long-lived PAT
+    const verifier = job('verify-release-e2e');
+    expect(verifier).toContain(
+      'E2E_DISPATCH_TOKEN: ${{ steps.e2e-dispatch-token.outputs.token }}'
+    );
+    expect(releaseWorkflow).not.toContain('secrets.E2E_DISPATCH_TOKEN');
+
+    // Mint step immediately precedes the verifier in source order
+    const mintIdx = releaseWorkflow.indexOf('Mint composite release E2E dispatch App token');
+    const verifierIdx = releaseWorkflow.indexOf('Require real released-composite E2E');
+    expect(mintIdx).toBeGreaterThan(-1);
+    expect(verifierIdx).toBeGreaterThan(-1);
+    expect(mintIdx).toBeLessThan(verifierIdx);
+
+    // Verifier remains fail-closed: exact capability/correlation enforcement unchanged
+    expect(verifier).not.toContain('continue-on-error');
+    expect(verifier).toContain("E2E_GATE_MODE: ${{ inputs.e2e_verification_mode || 'enforce' }}");
+    expect(verifier).toContain('E2E_GATE_ACTION: postman-api-onboarding-action');
+    expect(verifier).toContain('E2E_GATE_SUITE: full');
+    expect(verifier).toContain('E2E_GATE_REF: ${{ github.ref_name }}');
+    expect(verifier).toContain('E2E_GATE_SOURCE_DIGEST: ${{ needs.verify-package.outputs.release_tgz_sha256 }}');
+    expect(verifier).toContain('node scripts/verify-e2e-release.mjs');
+  });
+
   it('documents publication independence and correlated alias verification in the current v3 release policy', () => {
     expect(releasePolicy).toContain('nightly `full` monitor');
     expect(releasePolicy).toContain('not a PR or immutable-publication gate');

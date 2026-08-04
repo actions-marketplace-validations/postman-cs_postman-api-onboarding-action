@@ -381,7 +381,7 @@ describe('postman-api-onboarding-action composite contract', () => {
       const insightsStep = steps.find((step) => step.id === 'insights_onboarding');
 
       expect(validateStep?.shell).toBe('bash');
-      expect(bootstrapStep?.uses).toBe('postman-cs/postman-bootstrap-action@v2.17.0');
+      expect(bootstrapStep?.uses).toBe('postman-cs/postman-bootstrap-action@v2.17.1');
       expect(repoSyncStep?.uses).toBe('postman-cs/postman-repo-sync-action@v2.8.7');
       expect(junitStep?.shell).toBe('bash');
       expect(uploadStep?.uses).toBe('actions/upload-artifact@v7.0.1');
@@ -630,7 +630,7 @@ describe('postman-api-onboarding-action composite contract', () => {
         "${{ inputs.spec-url == '' && inputs.spec-files-json || '' }}"
       );
       // Sibling pins stay on the current immutable tags.
-      expect(bootstrapStep?.uses).toBe('postman-cs/postman-bootstrap-action@v2.17.0');
+      expect(bootstrapStep?.uses).toBe('postman-cs/postman-bootstrap-action@v2.17.1');
       expect(
         manifest.runs.steps.find((step) => step.id === 'repo_sync')?.uses
       ).toBe('postman-cs/postman-repo-sync-action@v2.8.7');
@@ -766,16 +766,24 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(bootstrapStep?.with?.['workspace-team-id']).toBe(
         '${{ inputs.workspace-team-id }}'
       );
+      expect(bootstrapStep?.with?.['workspace-team-id']).not.toBe(
+        '${{ inputs.postman-team-id }}'
+      );
       expect(repoSyncStep?.with?.['workspace-team-id']).toBeUndefined();
       expect(insightsStep?.with?.['workspace-team-id']).toBeUndefined();
     });
 
     it('workspace-team-id input is optional with no default', () => {
       const manifest = loadManifest();
+      const description = manifest.inputs['workspace-team-id']?.description ?? '';
       expect(manifest.inputs['workspace-team-id']).toBeDefined();
       expect(manifest.inputs['workspace-team-id']?.required).toBe(false);
       expect(manifest.inputs['workspace-team-id']?.default).toBeUndefined();
-      expect(manifest.inputs['workspace-team-id']?.description).toContain('org-mode');
+      expect(description).toContain('org-mode');
+      expect(description).toContain('SUB-TEAM');
+      expect(description).toContain('squad');
+      expect(description).toMatch(/parent\/org/);
+      expect(description).toContain('never a valid value');
     });
 
     it('passes hidden postman-stack through to bootstrap', () => {

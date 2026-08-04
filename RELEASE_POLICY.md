@@ -77,7 +77,7 @@ rewrite an immutable tag or force-push.
 
 The composite action currently depends on:
 
-- `postman-cs/postman-bootstrap-action@v2.17.0`
+- `postman-cs/postman-bootstrap-action@v2.17.1`
 - `postman-cs/postman-repo-sync-action@v2.8.7`
 - `postman-cs/postman-smoke-flow-action@v3.3.1` when `flow-path` or `flow-mode` is set
 - `postman-cs/postman-insights-onboarding-action@v2.4.1` when Insights is enabled
@@ -94,10 +94,12 @@ contract tests, README, this file), then the workflow validates the result with
 `scripts/check-sibling-pins.mjs` and the full test suite before pushing to
 `main`, where Auto Release cuts the composite release. Majors never advance
 automatically; crossing a major stays a reviewed change. The push authenticates
-as the `postman-suite-pin-bot` GitHub App (org-owned, installed on the five
-suite repos), which mints a one-hour installation token per run and is allowed
-to bypass main's review requirement; without a usable App token the workflow
-opens a pull request instead.
+as the `postman-suite-pin-bot` GitHub App (org-owned, installed on the suite
+repos), which mints a one-hour installation token per run. The direct
+`HEAD:main` push attempts only when that App token is minted and non-empty, so
+a `GITHUB_TOKEN` push that would silently bypass Auto Release cannot land
+unreleased on `main`. When the App token is absent or the direct push fails, the
+workflow falls back to a ready-to-review pull request opened with `github.token`.
 
 ### Composite release rule
 
@@ -167,6 +169,23 @@ the rolling `v3` alias. A manual `report-only` selection is the only explicit
 override; enforcement is the default. Verification fails closed with
 `E2E_COMPOSITE_USES_UNAVAILABLE` when a released composite `uses:` path is
 unavailable rather than claiming constituent-action coverage for the composite.
+
+### Release E2E dispatch token
+
+The release workflow's `verify-release-e2e` job mints a short-lived GitHub App
+installation token (one hour) via `actions/create-github-app-token`, scoped to
+`postman-cs` on `postman-actions-e2e`. This token carries the App installation
+permissions **Actions: write** and **Contents: read** on that repository and is
+fed to the E2E verifier as `E2E_DISPATCH_TOKEN` so the verifier can dispatch and
+observe the release-gated workflow run.
+
+> **Operator prerequisite:** the `postman-suite-pin-bot` GitHub App must be
+> installed on `postman-cs/postman-actions-e2e` with at least **Actions: write**
+> and **Contents: read** permissions. The composite release workflow does not
+> create or provision this installation itself; an operator must install the App
+> and grant those permissions before a correlated E2E gate can dispatch and
+> observe a run. If the App token cannot be minted or is empty, verification
+> fails closed — the verifier never falls back to an ambient or default token.
 
 ## Compatibility matrix
 

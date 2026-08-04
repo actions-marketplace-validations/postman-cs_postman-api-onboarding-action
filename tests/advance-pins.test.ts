@@ -110,7 +110,56 @@ describe('advance-pins workflow', () => {
     expect(advanceWorkflow).toContain('fix(deps): advance sibling pins');
   });
 
-  it('falls back to a pull request when main cannot be pushed directly', () => {
-    expect(advanceWorkflow).toContain('gh pr create');
+  it('locks current real pins: bootstrap v2.17.1, smoke v3.3.1, repo-sync v2.8.7', () => {
+    const pins = extractPins(actionManifest);
+    const byRepo = new Map(pins.map((pin) => [pin.repo, pin.tag]));
+    expect(byRepo.get('postman-bootstrap-action')).toBe('v2.17.1');
+    expect(byRepo.get('postman-smoke-flow-action')).toBe('v3.3.1');
+    expect(byRepo.get('postman-repo-sync-action')).toBe('v2.8.7');
+  });
+
+  it('gates direct main push on a non-empty App token so GITHUB_TOKEN cannot land unreleased pins', () => {
+    // APP_TOKEN is the raw App token without fallback to github.token
+    expect(advanceWorkflow).toContain('APP_TOKEN: ${{ steps.app-token.outputs.token }}');
+    expect(advanceWorkflow).not.toContain('APP_TOKEN: ${{ steps.app-token.outputs.token || github.token }}');
+    // GH_TOKEN is github.token for the PR fallback only
+    expect(advanceWorkflow).toContain('GH_TOKEN: ${{ github.token }}');
+    expect(advanceWorkflow).not.toContain('GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}');
+    // Direct main push is gated on APP_TOKEN being non-empty
+    expect(advanceWorkflow).toContain('if [ -n "$APP_TOKEN" ]');
+    expect(advanceWorkflow).toContain('git push origin HEAD:main');
+    // The direct push precedes the PR fallback in script order
+    expect(advanceWorkflow.indexOf('if [ -n "$APP_TOKEN" ]')).toBeGreaterThan(-1);
+    expect(advanceWorkflow.indexOf('git push origin HEAD:main')).toBeGreaterThan(-1);
+    expect(advanceWorkflow.indexOf('if [ -n "$APP_TOKEN" ]')).toBeLessThan(
+      advanceWorkflow.indexOf('git push origin HEAD:main')
+    );
+    expect(advanceWorkflow.indexOf('git push origin HEAD:main')).toBeLessThan(
+      advanceWorkflow.indexOf('gh pr create')
+    );
+    // Notice printed when App token is absent
+    expect(advanceWorkflow).toContain('No App token minted');
+  });
+
+  it('reaches PR fallback instead of a direct main push when no App token is minted', () => {
+    const noTokenNoticeIdx = advanceWorkflow.indexOf('No App token minted');
+    const prFallbackIdx = advanceWorkflow.indexOf('gh pr create');
+    expect(noTokenNoticeIdx).toBeGreaterThan(-1);
+    expect(prFallbackIdx).toBeGreaterThan(-1);
+    expect(noTokenNoticeIdx).toBeLessThan(prFallbackIdx);
+    expect(advanceWorkflow).toContain('BRANCH="chore/advance-sibling-pins-');
+    expect(advanceWorkflow).toContain('gh workflow run ci.yml');
+    // The no-App path must NOT attempt a direct main push
+    const noAppSection = advanceWorkflow.slice(noTokenNoticeIdx, prFallbackIdx);
+    expect(noAppSection).not.toContain('git push origin HEAD:main');
+  });
+
+  it('falls back to PR when an App-backed direct push fails', () => {
+    // The push failure notice precedes the PR fallback
+    const pushFailNoticeIdx = advanceWorkflow.indexOf('App-backed push to main failed');
+    const prFallbackIdx = advanceWorkflow.indexOf('gh pr create');
+    expect(pushFailNoticeIdx).toBeGreaterThan(-1);
+    expect(prFallbackIdx).toBeGreaterThan(-1);
+    expect(pushFailNoticeIdx).toBeLessThan(prFallbackIdx);
   });
 });
