@@ -116,6 +116,47 @@ describe('postman-api-onboarding-action composite contract', () => {
       }
     });
 
+    it('public docs guide consumers to composite v3, not v2', () => {
+      const scopedDocs = [
+        'README.md',
+        'SUPPORT.md',
+        'SECURITY.md',
+        'docs/protected-branch-workflows.md',
+        'docs/credentials.md',
+        'docs/deferred-tests.md'
+      ];
+      const readDoc = (rel: string): string =>
+        readFileSync(path.join(repoRoot, rel), 'utf8');
+
+      for (const doc of scopedDocs) {
+        const content = readDoc(doc);
+        expect(
+          content,
+          `${doc} must not reference postman-api-onboarding-action@v2`
+        ).not.toContain('postman-api-onboarding-action@v2');
+        expect(
+          content,
+          `${doc} must not reference composite v2.x.y immutable tags`
+        ).not.toMatch(/v2\.x\.y/);
+      }
+
+      const readme = readDoc('README.md');
+      expect(readme).toContain('postman-api-onboarding-action@v3');
+      expect(readme).toContain(
+        'Releases use immutable `v3.x.y` tags with `v3` as the rolling release channel'
+      );
+
+      const support = readDoc('SUPPORT.md');
+      expect(support).not.toContain('Use `@v2`');
+      expect(support).toContain('postman-api-onboarding-action@v3');
+      expect(support).toContain('`@v3`');
+      expect(support).toContain('v3.x.y');
+
+      const security = readDoc('SECURITY.md');
+      expect(security).toContain('v3.x.y');
+      expect(security).toContain('rolling `v3` alias');
+    });
+
     it('package.json version is a publishable semver release', () => {
       const pkg = loadPackageJson();
       expect(String(pkg.version)).toMatch(/^\d+\.\d+\.\d+$/);
