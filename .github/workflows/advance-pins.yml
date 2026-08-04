@@ -88,7 +88,7 @@ jobs:
           set -euo pipefail
           git config user.name "postman-suite-pin-bot[bot]"
           git config user.email "311553872+postman-suite-pin-bot[bot]@users.noreply.github.com"
-          git add action.yml tests/contract.test.ts RELEASE_POLICY.md README.md
+          git add action.yml tests/contract.test.ts tests/advance-pins.test.ts RELEASE_POLICY.md README.md
           git commit -m "fix(deps): advance sibling pins to the latest released tags"
           # Direct main push requires the App token: a GITHUB_TOKEN push to main
           # may succeed at the git layer but does not trigger Auto Release, so a
