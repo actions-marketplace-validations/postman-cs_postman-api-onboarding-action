@@ -572,7 +572,7 @@ runs:
     - id: smoke_flow
       name: Apply Smoke flow
       if: ${{ inputs.onboarding-scope == 'full' && (inputs.flow-path != '' || inputs.flow-mode != '') && steps.branch_decision.outputs.tier != 'gated' }}
-      uses: postman-cs/postman-smoke-flow-action@v3.3.2
+      uses: postman-cs/postman-smoke-flow-action@v3.4.0
       env:
         POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
         POSTMAN_BRANCH_DECISION: ${{ steps.branch_decision.outputs.branch-decision }}
@@ -793,7 +793,7 @@ runs:
     - id: insights_onboarding
       if: inputs.onboarding-scope == 'full' && inputs.enable-insights == 'true' && steps.branch_decision.outputs.tier != 'gated'
       name: Onboard Postman Insights
-      uses: postman-cs/postman-insights-onboarding-action@v2.4.1
+      uses: postman-cs/postman-insights-onboarding-action@v2.4.2
       env:
         POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
         POSTMAN_BRANCH_DECISION: ${{ steps.branch_decision.outputs.branch-decision }}
