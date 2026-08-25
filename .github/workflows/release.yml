@@ -204,7 +204,19 @@ jobs:
           PKG_NAME=$(tar -xOf release/release.tgz package/package.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).name")
           PKG_VERSION=$(tar -xOf release/release.tgz package/package.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
           SRI="sha512-$(openssl dgst -sha512 -binary release/release.tgz | openssl base64 -A)"
-          EXISTING=$(npm view "$PKG_NAME@$PKG_VERSION" dist.integrity)
+          # A publish takes time to reach the registry read path. Measured 309s
+          # (azure 1.5.1) and 307s (gcp 1.3.1) for a first publish of a new name
+          # on 2026-08-25; ~20s for a later version of an existing package.
+          set +e
+          for attempt in $(seq 1 40); do
+            EXISTING=$(npm view "$PKG_NAME@$PKG_VERSION" dist.integrity 2>/dev/null)
+            NPM_VIEW_STATUS=$?
+            if [ "$NPM_VIEW_STATUS" -eq 0 ] && [ -n "$EXISTING" ]; then break; fi
+            echo "::notice::registry read-back attempt $attempt/40 has not resolved yet"
+            if [ "$attempt" -lt 40 ]; then sleep 15; fi
+          done
+          set -e
+          [ -n "${EXISTING:-}" ] || { echo '::error::npm package is not visible after a successful publish'; exit 1; }
           [ "$EXISTING" = "$SRI" ] || { echo '::error::Published npm integrity differs from staged tarball'; exit 1; }
       - name: Report npm publish skipped
         if: steps.npm-publish.outputs.published != 'true'
@@ -215,7 +227,7 @@ jobs:
 
   verify-release-e2e:
     needs: [classify, verify-package, publish]
-    if: ${{ !cancelled() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.outputs.published == 'true' }}
+    if: ${{ !cancelled() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -250,7 +262,7 @@ jobs:
 
   advance-major-alias:
     needs: [classify, publish, verify-release-e2e]
-    if: ${{ !cancelled() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.outputs.published == 'true' && needs.verify-release-e2e.result == 'success' }}
+    if: ${{ !cancelled() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' && needs.verify-release-e2e.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
