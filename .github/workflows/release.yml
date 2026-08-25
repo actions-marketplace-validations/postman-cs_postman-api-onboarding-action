@@ -215,7 +215,7 @@ jobs:
 
   verify-release-e2e:
     needs: [classify, verify-package, publish]
-    if: ${{ !cancelled() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' }}
+    if: ${{ !cancelled() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.outputs.published == 'true' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -250,7 +250,7 @@ jobs:
 
   advance-major-alias:
     needs: [classify, publish, verify-release-e2e]
-    if: ${{ !cancelled() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' && needs.verify-release-e2e.result == 'success' }}
+    if: ${{ !cancelled() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.outputs.published == 'true' && needs.verify-release-e2e.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
