@@ -5,7 +5,10 @@ branding:
   icon: send
   color: orange
 inputs:
-
+  working-directory:
+    description: Repository-root-relative service directory used for all local inputs and generated artifacts.
+    required: false
+    default: ''
   workspace-id:
     description: Existing Postman workspace ID.
     required: false
@@ -59,9 +62,8 @@ inputs:
     required: false
     default: ""
   generate-ci-workflow:
-    description: Whether to generate the CI workflow file.
+    description: Whether to generate the CI workflow file. Defaults to true at the repository root and false when working-directory is set.
     required: false
-    default: "true"
   ci-workflow-path:
     description: Path to write the generated CI workflow file.
     required: false
@@ -455,6 +457,7 @@ runs:
         POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
         POSTMAN_REGION: ${{ inputs.postman-region }}
         POSTMAN_STACK: ${{ inputs.postman-stack }}
+        WORKING_DIRECTORY: ${{ inputs.working-directory }}
         CREDENTIAL_PREFLIGHT: ${{ inputs.credential-preflight }}
         REPO_WRITE_MODE: ${{ inputs.repo-write-mode }}
         POSTMAN_API_KEY: ${{ inputs.postman-api-key }}
@@ -465,6 +468,12 @@ runs:
         INSIGHTS_POSTMAN_API_KEY: ${{ inputs.insights-postman-api-key }}
         INSIGHTS_POSTMAN_ACCESS_TOKEN: ${{ inputs.insights-postman-access-token }}
       run: |
+        if [ -n "$WORKING_DIRECTORY" ]; then
+          if ! node -e 'const fs=require("node:fs"),path=require("node:path");const target=path.resolve(process.env.GITHUB_WORKSPACE,process.env.WORKING_DIRECTORY);process.exit(fs.existsSync(target)&&fs.statSync(target).isDirectory()?0:1)'; then
+            echo "::error::working-directory does not exist under GITHUB_WORKSPACE. Create the directory or correct the input."
+            exit 1
+          fi
+        fi
         case "$POSTMAN_STACK" in
           prod|beta) ;;
           *)
@@ -524,6 +533,7 @@ runs:
         # the pinned child metadata contract.
         INPUT_REPO_URL: ${{ inputs.repo-url }}
       with:
+        working-directory: ${{ inputs.working-directory }}
         project-name: ${{ inputs.project-name }}
         workspace-id: ${{ inputs.workspace-id }}
         spec-id: ${{ inputs.spec-id }}
@@ -577,6 +587,7 @@ runs:
         POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
         POSTMAN_BRANCH_DECISION: ${{ steps.branch_decision.outputs.branch-decision }}
       with:
+        working-directory: ${{ inputs.working-directory }}
         project-name: ${{ inputs.project-name }}
         workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}
         spec-id: ${{ steps.bootstrap.outputs.spec-id }}
@@ -601,6 +612,7 @@ runs:
         POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
         POSTMAN_BRANCH_DECISION: ${{ steps.branch_decision.outputs.branch-decision }}
       with:
+        working-directory: ${{ inputs.working-directory }}
         project-name: ${{ inputs.project-name }}
         repo-url: ${{ inputs.repo-url }}
         workspace-id: ${{ steps.bootstrap.outputs.workspace-id }}

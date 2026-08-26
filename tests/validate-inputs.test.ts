@@ -38,6 +38,8 @@ function runValidation(env: Record<string, string>): { status: number; stderr: s
     const stdout = execFileSync('bash', ['-c', validationScript()], {
       env: {
         PATH: process.env.PATH ?? '',
+        GITHUB_WORKSPACE: repoRoot,
+        WORKING_DIRECTORY: '',
         POSTMAN_STACK: 'prod',
         POSTMAN_REGION: 'us',
         CREDENTIAL_PREFLIGHT: 'warn',
@@ -94,6 +96,7 @@ describe('composite first-step input validation', () => {
     const validateStep = steps[1];
     expect(validateStep?.id).toBe('validate_postman_stack');
     expect(validateStep?.env?.REPO_WRITE_MODE).toBe('${{ inputs.repo-write-mode }}');
+    expect(validateStep?.env?.WORKING_DIRECTORY).toBe('${{ inputs.working-directory }}');
     expect(validateStep?.env?.POSTMAN_API_KEY).toBe('${{ inputs.postman-api-key }}');
     expect(validateStep?.env?.POSTMAN_ACCESS_TOKEN).toBe('${{ inputs.postman-access-token }}');
     expect(validateStep?.env?.ENABLE_INSIGHTS).toBe('${{ inputs.enable-insights }}');
@@ -163,6 +166,21 @@ describe('composite first-step input validation', () => {
       expect(output).toContain('Attempted Insights credential validation failed');
       expect(output).toContain('both insights-postman-api-key and insights-postman-access-token are required');
     }
+  }, 20_000);
+
+  it('accepts an existing working directory', () => {
+    expect(runValidation({ WORKING_DIRECTORY: 'tests' }).status).toBe(0);
+  }, 20_000);
+
+  it('rejects a missing working directory without reflecting the input', () => {
+    const value = 'services/missing\n::error::forged-annotation';
+    const result = runValidation({ WORKING_DIRECTORY: value });
+    const output = combinedOutput(result);
+    expect(result.status).toBe(1);
+    expect(output).toContain('working-directory does not exist under GITHUB_WORKSPACE');
+    expect(output).not.toContain(value);
+    expect(output).not.toContain('forged-annotation');
+    expect(errorAnnotations(output)).toHaveLength(1);
   }, 20_000);
 
   it.each([

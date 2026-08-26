@@ -221,6 +221,7 @@ describe('postman-api-onboarding-action composite contract', () => {
     it('has the complete expected input set', () => {
       const manifest = loadManifest();
       expect(Object.keys(manifest.inputs)).toEqual([
+        'working-directory',
         'workspace-id',
         'spec-id',
         'baseline-collection-id',
@@ -317,6 +318,25 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(manifest.inputs['project-name']?.required).toBe(true);
       expect(manifest.inputs['spec-url']?.required).toBe(false);
       expect(manifest.inputs['spec-path']?.required).toBe(false);
+    });
+
+    it('forwards an optional working directory to every repo-relative child', () => {
+      const manifest = loadManifest();
+      const workingDirectory = manifest.inputs['working-directory'];
+      const bootstrap = manifest.runs.steps.find((step) => step.id === 'bootstrap');
+      const smokeFlow = manifest.runs.steps.find((step) => step.id === 'smoke_flow');
+      const repoSync = manifest.runs.steps.find((step) => step.id === 'repo_sync');
+      const insights = manifest.runs.steps.find((step) => step.id === 'insights_onboarding');
+      const validation = manifest.runs.steps.find((step) => step.id === 'validate_postman_stack');
+
+      expect(workingDirectory).toMatchObject({ required: false, default: '' });
+      expect(workingDirectory?.description).toMatch(/repository-root-relative/i);
+      for (const child of [bootstrap, smokeFlow, repoSync]) {
+        expect(child?.with?.['working-directory']).toBe('${{ inputs.working-directory }}');
+      }
+      expect(insights?.with?.['working-directory']).toBeUndefined();
+      expect(validation?.env?.WORKING_DIRECTORY).toBe('${{ inputs.working-directory }}');
+      expect(validation?.run).toContain('working-directory does not exist');
     });
 
     it('forwards an optional explicit repo-url to both mutating child actions', () => {
@@ -1187,9 +1207,15 @@ describe('postman-api-onboarding-action composite contract', () => {
   });
 
   describe('Phase 3: Safe Defaults', () => {
-    it('generate-ci-workflow defaults to true', () => {
+    it('leaves generate-ci-workflow unset so repo-sync can choose the context default', () => {
       const manifest = loadManifest();
-      expect(manifest.inputs['generate-ci-workflow']?.default).toBe('true');
+      expect(manifest.inputs['generate-ci-workflow']?.default).toBeUndefined();
+      expect(manifest.inputs['generate-ci-workflow']?.description).toMatch(/repository root/i);
+      expect(manifest.inputs['generate-ci-workflow']?.description).toMatch(/working-directory/i);
+      const repoSync = manifest.runs.steps.find((step) => step.id === 'repo_sync');
+      expect(repoSync?.with?.['generate-ci-workflow']).toBe(
+        '${{ inputs.generate-ci-workflow }}'
+      );
     });
 
     it('ci-workflow-path defaults to .github/workflows/ci.yml', () => {
