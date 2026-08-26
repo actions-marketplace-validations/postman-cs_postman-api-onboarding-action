@@ -793,7 +793,7 @@ runs:
     - id: insights_onboarding
       if: inputs.onboarding-scope == 'full' && inputs.enable-insights == 'true' && steps.branch_decision.outputs.tier != 'gated'
       name: Onboard Postman Insights
-      uses: postman-cs/postman-insights-onboarding-action@v2.4.4
+      uses: postman-cs/postman-insights-onboarding-action@v2.5.0
       env:
         POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
         POSTMAN_BRANCH_DECISION: ${{ steps.branch_decision.outputs.branch-decision }}
