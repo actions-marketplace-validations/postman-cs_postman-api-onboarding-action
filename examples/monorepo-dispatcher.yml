@@ -1,0 +1,198 @@
+name: Postman monorepo dispatcher
+
+on:
+  push:
+    paths:
+      - 'services/**'
+  pull_request:
+    paths:
+      - 'services/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      changed-code: ${{ steps.changes.outputs.changed-code }}
+      changed-collections: ${{ steps.changes.outputs.changed-collections }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: changes
+        name: Detect changed services
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_REF: ${{ github.base_ref || '' }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SYNC_COMMITTER_NAME: Postman
+          SYNC_COMMITTER_EMAIL: support@postman.com
+        run: |
+          set -euo pipefail
+          CODE_SERVICES=$(mktemp "$RUNNER_TEMP/postman-code-services.XXXXXX")
+          COLLECTION_SERVICES=$(mktemp "$RUNNER_TEMP/postman-collection-services.XXXXXX")
+          trap 'rm -f "$CODE_SERVICES" "$COLLECTION_SERVICES"' EXIT
+
+          record_service() {
+            local service=$1 relative=$2 skip_onboard=$3
+            [ -d "services/$service" ] || return 0
+            printf '%s\n' "$service" >> "$COLLECTION_SERVICES"
+            if [[ "$relative" != postman/* && "$relative" != .postman/* && "$skip_onboard" != true ]]; then
+              printf '%s\n' "$service" >> "$CODE_SERVICES"
+            fi
+          }
+
+          if [ "$EVENT_NAME" = workflow_dispatch ]; then
+            for service_dir in services/*; do
+              [ -d "$service_dir" ] || continue
+              service=${service_dir#services/}
+              printf '%s\n' "$service" >> "$CODE_SERVICES"
+              printf '%s\n' "$service" >> "$COLLECTION_SERVICES"
+            done
+          else
+            SKIP_ONBOARD=false
+            COMMITTER_NAME=$(git show -s --format=%cn "$HEAD_SHA")
+            COMMITTER_EMAIL=$(git show -s --format=%ce "$HEAD_SHA")
+            if [ "$COMMITTER_NAME" = "$SYNC_COMMITTER_NAME" ] && [ "$COMMITTER_EMAIL" = "$SYNC_COMMITTER_EMAIL" ]; then
+              SKIP_ONBOARD=true
+            fi
+
+            case "$EVENT_NAME" in
+              pull_request)
+                BASE_SOURCE="origin/$BASE_REF"
+                git rev-parse --verify "${BASE_SOURCE}^{commit}" >/dev/null 2>&1 || BASE_SOURCE="$BASE_REF"
+                RANGE_BASE=$(git merge-base "$BASE_SOURCE" "$HEAD_SHA")
+                ;;
+              push)
+                if [ -n "$BEFORE_SHA" ] && [[ ! "$BEFORE_SHA" =~ ^0+$ ]] && git rev-parse --verify "${BEFORE_SHA}^{commit}" >/dev/null 2>&1; then
+                  RANGE_BASE=$BEFORE_SHA
+                else
+                  DEFAULT_SOURCE="origin/$DEFAULT_BRANCH"
+                  git rev-parse --verify "${DEFAULT_SOURCE}^{commit}" >/dev/null 2>&1 || DEFAULT_SOURCE="$DEFAULT_BRANCH"
+                  if git rev-parse --verify "${DEFAULT_SOURCE}^{commit}" >/dev/null 2>&1 && RANGE_BASE=$(git merge-base "$DEFAULT_SOURCE" "$HEAD_SHA"); then
+                    :
+                  else
+                    RANGE_BASE=$(git hash-object -t tree /dev/null)
+                  fi
+                fi
+                ;;
+              *)
+                echo "Unsupported event: $EVENT_NAME" >&2
+                exit 1
+                ;;
+            esac
+
+            while IFS= read -r -d '' changed_path; do
+              if [[ "$changed_path" =~ ^services/([^/]+)/(.+)$ ]]; then
+                record_service "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$SKIP_ONBOARD"
+              fi
+            done < <(git diff --name-only -z "$RANGE_BASE" "$HEAD_SHA" -- services)
+          fi
+
+          json_from_file() {
+            node - "$1" <<'NODE'
+          const fs = require('node:fs');
+          const values = fs.readFileSync(process.argv[2], 'utf8').split('\n').filter(Boolean);
+          process.stdout.write(JSON.stringify([...new Set(values)].sort()));
+          NODE
+          }
+          echo "changed-code=$(json_from_file "$CODE_SERVICES")" >> "$GITHUB_OUTPUT"
+          echo "changed-collections=$(json_from_file "$COLLECTION_SERVICES")" >> "$GITHUB_OUTPUT"
+
+  onboard:
+    needs: detect
+    if: ${{ needs.detect.outputs.changed-code != '[]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: postman-sync-${{ github.ref }}
+      cancel-in-progress: false
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        service: ${{ fromJSON(needs.detect.outputs.changed-code) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+      - name: Onboard service
+        uses: postman-cs/postman-api-onboarding-action@v3
+        with:
+          working-directory: services/${{ matrix.service }}
+          project-name: ${{ matrix.service }}
+          spec-path: openapi.yaml
+          generate-ci-workflow: false
+          skip-built-in-tests: true
+          postman-api-key: ${{ secrets.POSTMAN_API_KEY }}
+          github-token: ${{ github.token }}
+          current-ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+
+  run:
+    needs: [detect, onboard]
+    if: ${{ always() && needs.detect.result == 'success' && needs.detect.outputs.changed-collections != '[]' && (needs.onboard.result == 'success' || needs.onboard.result == 'skipped') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.detect.outputs.changed-collections) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+      - name: Install Postman CLI
+        env:
+          POSTMAN_CLI_INSTALL_URL: https://dl-cli.pstmn.io/install/unix.sh
+        run: curl -fsSL "$POSTMAN_CLI_INSTALL_URL" | sh
+      - name: Login to Postman CLI
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+        run: postman login --with-api-key "$POSTMAN_API_KEY"
+      - name: Resolve service Postman resource IDs
+        working-directory: services/${{ matrix.service }}
+        run: |
+          ruby <<'RUBY'
+          require 'yaml'
+          config = YAML.load_file('.postman/resources.yaml') || {}
+          cloud = config.fetch('canonical', config.fetch('cloudResources', {}))
+          collections = cloud.fetch('collections', {})
+          environments = cloud.fetch('environments', {})
+          smoke = collections.find { |path, _| path.include?('[Smoke]') }&.last
+          contract = collections.find { |path, _| path.include?('[Contract]') }&.last
+          environment = environments.find { |path, _| path.end_with?('/prod.postman_environment.json') }&.last || environments.values.first
+          missing = []
+          missing << 'smoke collection' unless smoke
+          missing << 'contract collection' unless contract
+          missing << 'environment' unless environment
+          abort("Missing Postman resource IDs in .postman/resources.yaml: #{missing.join(', ')}") unless missing.empty?
+          File.open(ENV.fetch('GITHUB_ENV'), 'a') do |file|
+            file.puts("POSTMAN_SMOKE_COLLECTION_UID=#{smoke}")
+            file.puts("POSTMAN_CONTRACT_COLLECTION_UID=#{contract}")
+            file.puts("POSTMAN_ENVIRONMENT_UID=#{environment}")
+          end
+          RUBY
+      - name: Run service collections
+        working-directory: services/${{ matrix.service }}
+        run: |
+          set -euo pipefail
+          run_collection() {
+            local label=$1 uid=$2 result
+            echo "::group::${{ matrix.service }} $label collection"
+            set +e
+            postman collection run "$uid" -e "$POSTMAN_ENVIRONMENT_UID" --report-events
+            result=$?
+            set -e
+            echo '::endgroup::'
+            return "$result"
+          }
+          status=0
+          run_collection Smoke "$POSTMAN_SMOKE_COLLECTION_UID" || status=$?
+          run_collection Contract "$POSTMAN_CONTRACT_COLLECTION_UID" || status=$?
+          exit "$status"

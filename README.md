@@ -72,11 +72,18 @@ Use `postman-region: eu` for [EU data residency](https://learning.postman.com/do
 | Sync generated artifacts without the composite wrapper | [Postman Onboarding: Repo Sync](https://github.com/postman-cs/postman-repo-sync-action) | Lower-level artifact, environment, mock, monitor, and CI workflow sync. |
 | Link an existing workspace to Insights | [Postman Onboarding: Insights Linking](https://github.com/postman-cs/postman-insights-onboarding-action) | Lower-level Insights service-to-workspace binding. |
 
+## Monorepos
+
+Use one dispatcher under the repository-root `.github/workflows/` directory; GitHub ignores workflow files inside service directories. Set `working-directory: services/<service>` on the composite so relative spec and flow paths, `postman/` exports, and `.postman/` state stay inside that service. Each service should use its own `project-name` and Postman workspace by default.
+
+When `working-directory` is omitted, `generate-ci-workflow` still defaults to `true`. With a service directory it defaults to `false`, and explicitly requesting `true` fails because the nested workflow would not run. Start with [`examples/monorepo-dispatcher.yml`](examples/monorepo-dispatcher.yml), which detects changed services, serializes onboarding commits, prevents generated-artifact loops, and runs service collections in parallel. The canonical layout and CLI alternative are in the [repo-sync monorepo guide](https://github.com/postman-cs/postman-repo-sync-action/blob/main/docs/monorepo.md).
+
 ## Scenario guide
 
 - [Quick start](#quick-start): new GitHub API repository with service-token credential resolution.
 - [Governance and environments](#governance-and-environments): workspace ownership, governance groups, environments, and runtime URLs.
 - [Existing service refresh](#existing-service-refresh): reuse known Postman asset IDs while updating the spec and generated artifacts.
+- [Monorepos](#monorepos): isolate service-local inputs and generated artifacts behind one root dispatcher.
 - [Protected branches](#protected-branch-repos-commit-only-plus-pr): create a sync commit for a pull request instead of pushing directly.
 - [Insights linking](#insights-linking): connect discovered services to the onboarded workspace.
 - [AWS spec discovery](#aws-spec-discovery): discover the spec first, then feed the result into this composite action.
@@ -249,6 +256,7 @@ The hook only attaches `x-api-key` for `*.mock.pstmn.io` hosts, so it stays iner
 <!-- inputs-table:start -->
 | Name | Description | Required | Default |
 | --- | --- | --- | --- |
+| `working-directory` | Repository-root-relative service directory used for all local inputs and generated artifacts. | no |  |
 | `workspace-id` | Existing Postman workspace ID. | no |  |
 | `spec-id` | Existing Postman spec ID. | no |  |
 | `baseline-collection-id` | Existing baseline collection ID. | no |  |
@@ -264,7 +272,7 @@ The hook only attaches `x-api-key` for `*.mock.pstmn.io` hosts, so it stays iner
 | `mock-visibility` | Required mock access policy. Public is anonymous; private requires a runtime x-api-key supplied by the caller and is never persisted by repo-sync. | no | `public` |
 | `mock-environment-enabled` | Create or update a dedicated manual-validation environment whose baseUrl is the validated mock URL. This environment is excluded from runtime CI selection and never contains a mock credential. | no | `false` |
 | `monitor-cron` | Cron expression for monitor scheduling (e.g. '0 */6 * * *'). When empty, the monitor is created disabled and triggered to run once per workflow invocation (and once on every subsequent run). | no |  |
-| `generate-ci-workflow` | Whether to generate the CI workflow file. | no | `true` |
+| `generate-ci-workflow` | Whether to generate the CI workflow file. Defaults to true at the repository root and false when working-directory is set. | no |  |
 | `ci-workflow-path` | Path to write the generated CI workflow file. | no | `.github/workflows/ci.yml` |
 | `ci-runner-os` | Runner operating system for the generated CI workflow. Use windows for native PowerShell Azure DevOps CI. | no | `linux` |
 | `project-name` | Service project name used across bootstrap and repo sync phases. | yes |  |
