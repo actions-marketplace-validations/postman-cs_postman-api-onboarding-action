@@ -92,7 +92,7 @@ describe('postman-api-onboarding-action composite contract', () => {
 
     it('package.json name matches repository name', () => {
       const pkg = loadPackageJson();
-      expect(pkg.name).toBe('@postman/onboarding-api');
+      expect(pkg.name).toBe('@postman-cs/onboarding-api');
     });
 
     it('description carries the suite suffix, not beta', () => {

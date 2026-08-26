@@ -89,11 +89,11 @@ jobs:
       - pwsh: |
           $ErrorActionPreference = 'Stop'
           $packages = @(
-            '@postman-cse/onboarding-resolve-service-token@${{ parameters.resolveVersion }}',
-            '@postman-cse/onboarding-bootstrap@${{ parameters.bootstrapVersion }}',
-            '@postman-cse/onboarding-smoke-flow@${{ parameters.smokeFlowVersion }}',
-            '@postman-cse/onboarding-repo-sync@${{ parameters.repoSyncVersion }}',
-            '@postman-cse/onboarding-insights@${{ parameters.insightsVersion }}'
+            '@postman-cs/onboarding-resolve-service-token@${{ parameters.resolveVersion }}',
+            '@postman-cs/onboarding-bootstrap@${{ parameters.bootstrapVersion }}',
+            '@postman-cs/onboarding-smoke-flow@${{ parameters.smokeFlowVersion }}',
+            '@postman-cs/onboarding-repo-sync@${{ parameters.repoSyncVersion }}',
+            '@postman-cs/onboarding-insights@${{ parameters.insightsVersion }}'
           )
           & npm install --global @packages --no-audit --no-fund
           if ($LASTEXITCODE -ne 0) { throw "Onboarding CLI install failed with exit code $LASTEXITCODE" }

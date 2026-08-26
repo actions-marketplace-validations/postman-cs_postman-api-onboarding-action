@@ -91,7 +91,7 @@ function ensurePacked(packageVersion: string): string {
   writeFileSync(
     join(source, 'package.json'),
     `${JSON.stringify({
-      name: '@postman/onboarding-api',
+      name: '@postman-cs/onboarding-api',
       version: packageVersion,
       files: ['scripts/verify-release-artifacts.mjs']
     }, null, 2)}\n`
@@ -123,7 +123,7 @@ function caseFixture(options?: { packageVersion?: string; tag?: string }): strin
       repository: 'postman-cs/postman-api-onboarding-action',
       commit_sha: 'a'.repeat(40),
       tag,
-      package_name: '@postman/onboarding-api',
+      package_name: '@postman-cs/onboarding-api',
       package_version: packageVersion,
       artifacts: [{ path: 'release.tgz', sha256: sha256(releaseTarball) }]
     })
@@ -220,7 +220,7 @@ describe('release workflow artifact handoff', () => {
         repository: 'postman-cs/postman-api-onboarding-action',
         commit_sha: 'a'.repeat(40),
         tag: 'v2.1.2',
-        package_name: '@postman/onboarding-api',
+        package_name: '@postman-cs/onboarding-api',
         package_version: '2.1.2',
         artifacts: [{ path: 'release.tgz', sha256: sha256(tarballPath) }]
       })

@@ -222,8 +222,8 @@ jobs:
         if: steps.npm-publish.outputs.published != 'true'
         run: |
           PACKAGE_VERSION=$(tar -xOf release/release.tgz package/package.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
-          echo "::warning::npm publish for @postman/onboarding-api@$PACKAGE_VERSION did not complete (missing/invalid NPM_TOKEN or registry error); GitHub Release remains authoritative; recover via backfill-npm.yml once publish access exists"
-          echo "npm publish for @postman/onboarding-api@$PACKAGE_VERSION did not complete (missing/invalid NPM_TOKEN or registry error); GitHub Release remains authoritative; recover via backfill-npm.yml once publish access exists" >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning::npm publish for @postman-cs/onboarding-api@$PACKAGE_VERSION did not complete (missing/invalid NPM_TOKEN or registry error); GitHub Release remains authoritative; recover via backfill-npm.yml once publish access exists"
+          echo "npm publish for @postman-cs/onboarding-api@$PACKAGE_VERSION did not complete (missing/invalid NPM_TOKEN or registry error); GitHub Release remains authoritative; recover via backfill-npm.yml once publish access exists" >> "$GITHUB_STEP_SUMMARY"
 
   verify-release-e2e:
     needs: [classify, verify-package, publish]
