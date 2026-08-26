@@ -263,11 +263,22 @@ jobs:
     if: ${{ !cancelled() && needs.classify.outputs.release_kind == 'immutable' && needs.publish.result == 'success' && needs.verify-release-e2e.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
+      - name: Mint rolling alias App token
+        id: alias-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.SUITE_PIN_BOT_APP_ID }}
+          private-key: ${{ secrets.SUITE_PIN_BOT_PRIVATE_KEY }}
+          owner: postman-cs
+          repositories: postman-api-onboarding-action
+          permission-contents: write
+          permission-workflows: write
       - uses: actions/checkout@v7
         with:
           fetch-depth: 1
+          token: ${{ steps.alias-token.outputs.token }}
       - uses: actions/setup-node@v7
         with:
           node-version: '24'

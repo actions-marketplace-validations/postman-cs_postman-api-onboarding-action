@@ -341,6 +341,24 @@ describe('release workflow publishing contract', () => {
     expect(job('advance-major-alias')).toContain('fetch-depth: 1');
   });
 
+  it('uses a repository-scoped App token to advance the rolling alias', () => {
+    const aliasJob = job('advance-major-alias');
+    const mintStep = namedStep('Mint rolling alias App token');
+
+    expect(aliasJob).toMatch(/permissions:\n\s+contents: read/);
+    expect(mintStep).toContain(
+      'uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1'
+    );
+    expect(mintStep).toContain('app-id: ${{ secrets.SUITE_PIN_BOT_APP_ID }}');
+    expect(mintStep).toContain('private-key: ${{ secrets.SUITE_PIN_BOT_PRIVATE_KEY }}');
+    expect(mintStep).toContain('owner: postman-cs');
+    expect(mintStep).toContain('repositories: postman-api-onboarding-action');
+    expect(mintStep).toContain('permission-contents: write');
+    expect(mintStep).toContain('permission-workflows: write');
+    expect(aliasJob).toContain('token: ${{ steps.alias-token.outputs.token }}');
+    expect(aliasJob).not.toContain('token: ${{ github.token }}');
+  });
+
   it('requires exact correlated released-composite E2E evidence before the rolling alias', () => {
     const verifier = job('verify-release-e2e');
     expect(verifier).not.toContain('continue-on-error');
