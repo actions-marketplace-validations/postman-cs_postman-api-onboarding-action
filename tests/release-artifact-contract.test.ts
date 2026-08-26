@@ -191,10 +191,8 @@ describe('release workflow artifact handoff', () => {
     expect(JSON.stringify(publish)).not.toMatch(/npm pack(?:\\s|$|")/);
     expect(JSON.stringify(publish)).not.toContain('package/scripts/verify-release-artifacts.mjs');
     const tokenSteps = (publish?.steps ?? []).filter((step) => JSON.stringify(step).includes('NODE_AUTH_TOKEN'));
-    expect(tokenSteps).toHaveLength(1);
-    expect(tokenSteps[0]?.id).toBe('npm-publish');
-    expect(tokenSteps[0]?.env?.NODE_AUTH_TOKEN).toBe('${{ secrets.NPM_TOKEN }}');
-    expect(tokenSteps[0]?.['continue-on-error']).toBe(true);
+    expect(tokenSteps).toHaveLength(0);
+    expect(publish?.steps?.find((step) => step.id === 'npm-publish')?.['continue-on-error']).toBe(true);
   });
 
   it('executes the trusted inline verifier on a real tarball without running package code under OIDC env', () => {

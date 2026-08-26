@@ -278,7 +278,7 @@ describe('release workflow publishing contract', () => {
     expect(releaseWorkflow).not.toContain('go install');
   });
 
-  it('uses one trusted inline publish verifier before NODE_AUTH_TOKEN without executing package code', () => {
+  it('uses one trusted inline publish verifier before OIDC publication without executing package code', () => {
     const publish = job('publish');
     expect(publish).toMatch(/permissions:\n\s+contents: write\n\s+id-token: write/);
     expect(publish).not.toContain('actions/checkout');
@@ -300,10 +300,10 @@ describe('release workflow publishing contract', () => {
     expect(envelope).not.toContain('package/scripts/verify-release-artifacts.mjs');
     expect(envelope).not.toContain('NPM_TOKEN');
     expect(envelope).not.toContain('NODE_AUTH_TOKEN');
-    expect(npm).toContain('NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}');
-    expect(publish.indexOf('Verify release artifact envelope')).toBeLessThan(publish.indexOf('NODE_AUTH_TOKEN'));
+    expect(npm).not.toContain('NODE_AUTH_TOKEN');
+    expect(publish.indexOf('Verify release artifact envelope')).toBeLessThan(publish.indexOf('Publish npm package'));
     expect(publish.indexOf("execFileSync('tar', ['-xOf', tarballPath, 'package/package.json']")).toBeLessThan(
-      publish.indexOf('NODE_AUTH_TOKEN')
+      publish.indexOf('Publish npm package')
     );
   });
 
@@ -320,7 +320,7 @@ describe('release workflow publishing contract', () => {
     expect(publish).toContain('published: ${{ steps.npm-publish.outputs.published }}');
     expect(publish).toContain("if: steps.npm-publish.outputs.published == 'true'");
     expect(publish).toContain("if: steps.npm-publish.outputs.published != 'true'");
-    expect(publish).toContain('recover via backfill-npm.yml once publish access exists');
+    expect(publish).toContain('recover via backfill-npm.yml if needed');
     expect(publish).toContain('release/release.tgz');
     expect(publish).toContain('release/release-manifest.json');
     expect(releaseWorkflow).toContain('group: release-${{ github.repository }}');
