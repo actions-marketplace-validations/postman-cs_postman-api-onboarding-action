@@ -320,7 +320,7 @@ describe('release workflow publishing contract', () => {
     expect(publish).toContain('published: ${{ steps.npm-publish.outputs.published }}');
     expect(publish).toContain("if: steps.npm-publish.outputs.published == 'true'");
     expect(publish).toContain("if: steps.npm-publish.outputs.published != 'true'");
-    expect(publish).toContain('recover via backfill-npm.yml if needed');
+    expect(publish).toContain('rerun this release after trusted publishing is restored');
     expect(publish).toContain('release/release.tgz');
     expect(publish).toContain('release/release-manifest.json');
     expect(releaseWorkflow).toContain('group: release-${{ github.repository }}');

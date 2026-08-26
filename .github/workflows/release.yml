@@ -220,8 +220,8 @@ jobs:
         if: steps.npm-publish.outputs.published != 'true'
         run: |
           PACKAGE_VERSION=$(tar -xOf release/release.tgz package/package.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
-          echo "::warning::npm publish for @postman-cs/onboarding-api@$PACKAGE_VERSION did not complete (OIDC trusted publisher or registry error); GitHub Release remains authoritative; recover via backfill-npm.yml if needed"
-          echo "npm publish for @postman-cs/onboarding-api@$PACKAGE_VERSION did not complete (OIDC trusted publisher or registry error); GitHub Release remains authoritative; recover via backfill-npm.yml if needed" >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning::npm publish for @postman-cs/onboarding-api@$PACKAGE_VERSION did not complete (OIDC trusted publisher or registry error); GitHub Release remains authoritative; rerun this release after trusted publishing is restored"
+          echo "npm publish for @postman-cs/onboarding-api@$PACKAGE_VERSION did not complete (OIDC trusted publisher or registry error); GitHub Release remains authoritative; rerun this release after trusted publishing is restored" >> "$GITHUB_STEP_SUMMARY"
 
   verify-release-e2e:
     needs: [classify, verify-package, publish]

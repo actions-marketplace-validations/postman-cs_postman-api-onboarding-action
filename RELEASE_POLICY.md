@@ -160,10 +160,11 @@ packs in an unprivileged job, then publishes only checksummed staged artifacts i
 the privileged job. Trusted envelope verification establishes artifact identity
 and checksums before any packaged verifier code is extracted. The GitHub Release
 precedes the best-effort npm publication attempt, so tags and GitHub Releases
-remain authoritative when npm access is unavailable. A successful npm publish
-still receives hard SRI identity verification; failed attempts warn and can be
-recovered through `backfill-npm.yml`. That immutable publication remains
-separate from live verification.
+remain authoritative when npm access is unavailable. npm publication is
+OIDC-only. A successful npm publish still receives hard SRI identity
+verification; failed attempts warn and require rerunning the immutable release
+after trusted publishing is restored. That publication remains separate from
+live verification.
 
 Live sandbox E2E is not a PR or immutable-publication gate. The `onboarding-e2e`
 harness runs a nightly `full` monitor. After an immutable release publishes, the
