@@ -16,7 +16,15 @@ const NETWORK_TIMEOUT_MS = 30_000;
 // Every file that carries an immutable sibling pin literal. action.yml is the
 // source of truth; the rest mirror it and are normalized on every run so docs
 // and contract tests can never drift from the manifest.
-export const PIN_FILES = ['action.yml', 'tests/contract.test.ts', 'RELEASE_POLICY.md', 'README.md'];
+export const PIN_FILES = [
+  'action.yml',
+  '.github/workflows/release.yml',
+  'scripts/verify-e2e-release.test.mjs',
+  'tests/contract.test.ts',
+  'tests/release-workflow.test.ts',
+  'RELEASE_POLICY.md',
+  'README.md'
+];
 export const PINNED_SIBLING_REPOSITORIES = Object.freeze([
   'postman-bootstrap-action',
   'postman-insights-onboarding-action',
@@ -247,8 +255,14 @@ export function planAdvance(pins, promotedByRepo) {
  * @returns {string}
  */
 export function rewritePinLiterals(text, repo, to) {
-  const literal = new RegExp(`postman-cs/${repo}@v\\d+\\.\\d+\\.\\d+`, 'g');
-  return text.replace(literal, `postman-cs/${repo}@${to}`);
+  const actionLiteral = new RegExp(`postman-cs/${repo}@v\\d+\\.\\d+\\.\\d+`, 'g');
+  const peerMapLiteral = new RegExp(
+    `(["']postman-cs/${repo}["']\\s*:\\s*["'])v\\d+\\.\\d+\\.\\d+(["'])`,
+    'g'
+  );
+  return text
+    .replace(actionLiteral, `postman-cs/${repo}@${to}`)
+    .replace(peerMapLiteral, `$1${to}$2`);
 }
 
 function lsRemoteTags(repo, major) {

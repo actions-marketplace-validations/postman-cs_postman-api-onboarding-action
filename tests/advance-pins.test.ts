@@ -400,12 +400,18 @@ describe('pin literal rewriting', () => {
     const text = [
       'uses: postman-cs/postman-bootstrap-action@v2.13.7',
       '`postman-cs/postman-bootstrap-action@v2.13.7`',
+      'E2E_GATE_PEER_TAGS: \'{"postman-cs/postman-bootstrap-action":"v2.13.7"}\'',
+      "'postman-cs/postman-bootstrap-action': 'v2.13.7'",
       'postman-cs/postman-bootstrap-action@v2',
       'postman-cs/postman-repo-sync-action@v2.6.8'
     ].join('\n');
     const result = rewritePinLiterals(text, 'postman-bootstrap-action', 'v2.13.8');
     expect(result).toContain('uses: postman-cs/postman-bootstrap-action@v2.13.8');
     expect(result).toContain('`postman-cs/postman-bootstrap-action@v2.13.8`');
+    expect(result).toContain(
+      'E2E_GATE_PEER_TAGS: \'{"postman-cs/postman-bootstrap-action":"v2.13.8"}\''
+    );
+    expect(result).toContain("'postman-cs/postman-bootstrap-action': 'v2.13.8'");
     expect(result).toContain('postman-cs/postman-bootstrap-action@v2\n');
     expect(result).toContain('postman-cs/postman-repo-sync-action@v2.6.8');
   });
@@ -503,7 +509,17 @@ describe('advance-pins workflow', () => {
   });
 
   it('keeps current real sibling refs in updater-owned contract tests', () => {
-    expect(PIN_FILES).toContain('tests/contract.test.ts');
+    expect(PIN_FILES).toEqual([
+      'action.yml',
+      '.github/workflows/release.yml',
+      'scripts/verify-e2e-release.test.mjs',
+      'tests/contract.test.ts',
+      'tests/release-workflow.test.ts',
+      'RELEASE_POLICY.md',
+      'README.md'
+    ]);
+    const stagedFiles = advanceWorkflow.match(/git add \\\n([\s\S]*?)\n\s+git commit/)?.[1] ?? '';
+    for (const file of PIN_FILES) expect(stagedFiles).toContain(file);
     const pins = extractPins(actionManifest);
     for (const { repo, tag } of pins) {
       expect(contractTests).toContain(`postman-cs/${repo}@${tag}`);

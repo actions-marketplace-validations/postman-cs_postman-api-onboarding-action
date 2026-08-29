@@ -106,7 +106,14 @@ jobs:
           set -euo pipefail
           git config user.name "postman-suite-pin-bot[bot]"
           git config user.email "311553872+postman-suite-pin-bot[bot]@users.noreply.github.com"
-          git add action.yml tests/contract.test.ts RELEASE_POLICY.md README.md
+          git add \
+            action.yml \
+            .github/workflows/release.yml \
+            scripts/verify-e2e-release.test.mjs \
+            tests/contract.test.ts \
+            tests/release-workflow.test.ts \
+            RELEASE_POLICY.md \
+            README.md
           git commit -m "fix(deps): advance sibling pins to promoted releases"
           # Pin advances always land through a reviewed pull request. This
           # workflow has no default-branch write path: a direct push to main
