@@ -451,7 +451,7 @@ describe('postman-api-onboarding-action composite contract', () => {
     it('is a composite action with the expected step count', () => {
       const manifest = loadManifest();
       expect(manifest.runs.using).toBe('composite');
-      expect(manifest.runs.steps).toHaveLength(10);
+      expect(manifest.runs.steps).toHaveLength(11);
     });
 
     it('uses pinned bootstrap, repo-sync, junit-runner, junit-uploader, and insights actions', () => {
@@ -493,10 +493,10 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(validateStep?.run).toContain('Accepted values: us, eu');
     });
 
-    it('validates repo-write-mode in the first composite step before any child runs', () => {
+    it('validates repo-write-mode before any child runs', () => {
       const manifest = loadManifest();
       const steps = manifest.runs.steps;
-      const validateStep = steps[1];
+      const validateStep = steps[2];
 
       expect(validateStep?.id).toBe('validate_postman_stack');
       expect(validateStep?.env?.REPO_WRITE_MODE).toBe('${{ inputs.repo-write-mode }}');
@@ -509,9 +509,10 @@ describe('postman-api-onboarding-action composite contract', () => {
       );
     });
 
-    it('resolves one branch decision before validation and every child invocation', () => {
+    it('masks credentials before resolving one branch decision and every child invocation', () => {
       const manifest = loadManifest();
-      expect(manifest.runs.steps[0]?.id).toBe('branch_decision');
+      expect(manifest.runs.steps[0]?.id).toBe('mask_postman_credentials');
+      expect(manifest.runs.steps[1]?.id).toBe('branch_decision');
       for (const id of ['bootstrap', 'repo_sync', 'smoke_flow', 'insights_onboarding']) {
         expect(manifest.runs.steps.find((step) => step.id === id)?.env?.POSTMAN_BRANCH_DECISION).toBe('${{ steps.branch_decision.outputs.branch-decision }}');
       }

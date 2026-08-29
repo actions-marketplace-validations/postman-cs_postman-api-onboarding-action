@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { parse } from 'yaml';
@@ -40,6 +41,7 @@ function runValidation(env: Record<string, string>): { status: number; stderr: s
         PATH: process.env.PATH ?? '',
         GITHUB_WORKSPACE: repoRoot,
         WORKING_DIRECTORY: '',
+        SPEC_PATH: '',
         POSTMAN_STACK: 'prod',
         POSTMAN_REGION: 'us',
         CREDENTIAL_PREFLIGHT: 'warn',
@@ -90,13 +92,15 @@ describe('composite first-step input validation', () => {
     expect(manifest.inputs['repo-write-mode']?.default).toBe('commit-and-push');
   });
 
-  it('resolves branch decision first, then validates before any child', () => {
+  it('masks credentials, resolves branch decision, then validates before any child', () => {
     const steps = loadManifest().runs.steps;
-    expect(steps[0]?.id).toBe('branch_decision');
-    const validateStep = steps[1];
+    expect(steps[0]?.id).toBe('mask_postman_credentials');
+    expect(steps[1]?.id).toBe('branch_decision');
+    const validateStep = steps[2];
     expect(validateStep?.id).toBe('validate_postman_stack');
     expect(validateStep?.env?.REPO_WRITE_MODE).toBe('${{ inputs.repo-write-mode }}');
     expect(validateStep?.env?.WORKING_DIRECTORY).toBe('${{ inputs.working-directory }}');
+    expect(validateStep?.env?.SPEC_PATH).toBe('${{ inputs.spec-path }}');
     expect(validateStep?.env?.POSTMAN_API_KEY).toBe('${{ inputs.postman-api-key }}');
     expect(validateStep?.env?.POSTMAN_ACCESS_TOKEN).toBe('${{ inputs.postman-access-token }}');
     expect(validateStep?.env?.ENABLE_INSIGHTS).toBe('${{ inputs.enable-insights }}');
@@ -170,6 +174,30 @@ describe('composite first-step input validation', () => {
 
   it('accepts an existing working directory', () => {
     expect(runValidation({ WORKING_DIRECTORY: 'tests' }).status).toBe(0);
+  }, 20_000);
+
+  it('rejects a working directory that resolves outside GITHUB_WORKSPACE', () => {
+    const result = runValidation({ WORKING_DIRECTORY: '..' });
+    expect(result.status).toBe(1);
+    expect(combinedOutput(result)).toContain('working-directory does not exist under GITHUB_WORKSPACE');
+  }, 20_000);
+
+  it('accepts an existing repository-relative spec path', () => {
+    expect(runValidation({ SPEC_PATH: 'action.yml' }).status).toBe(0);
+  }, 20_000);
+
+  it('rejects an existing spec path outside GITHUB_WORKSPACE', () => {
+    const outside = mkdtempSync(path.join(tmpdir(), 'outside-spec-'));
+    const outsideSpec = path.join(outside, 'openapi.yaml');
+    writeFileSync(outsideSpec, 'openapi: 3.1.0\n');
+    try {
+      const result = runValidation({ SPEC_PATH: outsideSpec });
+      expect(result.status).toBe(1);
+      expect(combinedOutput(result)).toContain('spec-path does not name a file under GITHUB_WORKSPACE');
+      expect(combinedOutput(result)).not.toContain(outsideSpec);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   }, 20_000);
 
   it('rejects a missing working directory without reflecting the input', () => {
@@ -300,6 +328,40 @@ describe('composite first-step input validation', () => {
 });
 
 describe('child invocation order and credential forwarding', () => {
+  it('masks every Postman credential before branch resolution and child actions', () => {
+    const steps = loadManifest().runs.steps;
+    const maskStep = steps.find((step) => step.id === 'mask_postman_credentials');
+    expect(steps.indexOf(maskStep!)).toBe(0);
+    expect(maskStep?.env).toEqual({
+      POSTMAN_TEAM_ID: '${{ inputs.postman-team-id }}',
+      POSTMAN_API_KEY: '${{ inputs.postman-api-key }}',
+      POSTMAN_ACCESS_TOKEN: '${{ inputs.postman-access-token }}',
+      INSIGHTS_POSTMAN_API_KEY: '${{ inputs.insights-postman-api-key }}',
+      INSIGHTS_POSTMAN_ACCESS_TOKEN: '${{ inputs.insights-postman-access-token }}'
+    });
+    expect(maskStep?.run).toContain("value=${value//'%'/%25}");
+    expect(maskStep?.run).toContain("value=${value//$'\\n'/%0A}");
+    expect(maskStep?.run).toContain("printf '::add-mask::%s\\n' \"$value\"");
+
+    const output = execFileSync('bash', ['--noprofile', '--norc', '-c', maskStep?.run ?? ''], {
+      env: {
+        PATH: process.env.PATH ?? '',
+        POSTMAN_TEAM_ID: '',
+        POSTMAN_API_KEY: 'primary%key\nnext',
+        POSTMAN_ACCESS_TOKEN: 'primary-token',
+        INSIGHTS_POSTMAN_API_KEY: 'insights-key',
+        INSIGHTS_POSTMAN_ACCESS_TOKEN: 'insights-token'
+      },
+      encoding: 'utf8'
+    });
+    expect(output.trim().split('\n')).toEqual([
+      '::add-mask::primary%25key%0Anext',
+      '::add-mask::primary-token',
+      '::add-mask::insights-key',
+      '::add-mask::insights-token'
+    ]);
+  });
+
   it('invokes bootstrap, repo-sync, and insights exactly once in that order', () => {
     const steps = loadManifest().runs.steps;
     const childIds = steps

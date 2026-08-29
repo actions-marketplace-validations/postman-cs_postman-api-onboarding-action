@@ -400,6 +400,28 @@ outputs:
 runs:
   using: composite
   steps:
+    - id: mask_postman_credentials
+      name: Mask Postman credentials
+      shell: bash
+      env:
+        POSTMAN_TEAM_ID: ${{ inputs.postman-team-id }}
+        POSTMAN_API_KEY: ${{ inputs.postman-api-key }}
+        POSTMAN_ACCESS_TOKEN: ${{ inputs.postman-access-token }}
+        INSIGHTS_POSTMAN_API_KEY: ${{ inputs.insights-postman-api-key }}
+        INSIGHTS_POSTMAN_ACCESS_TOKEN: ${{ inputs.insights-postman-access-token }}
+      run: |
+        mask_secret() {
+          local value="$1"
+          [ -n "$value" ] || return 0
+          value=${value//'%'/%25}
+          value=${value//$'\r'/%0D}
+          value=${value//$'\n'/%0A}
+          printf '::add-mask::%s\n' "$value"
+        }
+        mask_secret "$POSTMAN_API_KEY"
+        mask_secret "$POSTMAN_ACCESS_TOKEN"
+        mask_secret "$INSIGHTS_POSTMAN_API_KEY"
+        mask_secret "$INSIGHTS_POSTMAN_ACCESS_TOKEN"
     - id: branch_decision
       name: Resolve immutable branch decision
       shell: bash
@@ -440,10 +462,11 @@ runs:
           if (!rules.some((rule) => rule.pattern === 'release/*')) rules.push({ pattern: 'release/*', code: 'RC' });
           channel = rules.find((rule) => rule.pattern.endsWith('*') ? headBranch?.startsWith(rule.pattern.slice(0, -1)) : headBranch === rule.pattern);
           if (refKind === 'tag' || refKind === 'unknown' || !headBranch) { tier = 'gated'; reason = `ref kind ${refKind}: no-op`; }
+          else if (isForkPr) { tier = 'gated'; reason = 'fork PR: credentialed tiers are ineligible'; }
           else if (headBranch === canonicalBranch) { tier = 'canonical'; reason = `head branch equals canonical branch ${canonicalBranch}`; }
           else if (channel) { tier = 'channel'; reason = `branch ${headBranch} matches channel ${channel.pattern}=${channel.code}`; }
-          else if (strategy === 'preview' && !isForkPr) { tier = 'preview'; reason = `branch ${headBranch} under branch-strategy preview`; }
-          else { tier = 'gated'; reason = isForkPr ? 'fork PR: preview-ineligible, gated instead' : `branch ${headBranch} under branch-strategy publish-gate`; }
+          else if (strategy === 'preview') { tier = 'preview'; reason = `branch ${headBranch} under branch-strategy preview`; }
+          else { tier = 'gated'; reason = `branch ${headBranch} under branch-strategy publish-gate`; }
         }
         const decision = { tier, strategy, identity, canonicalBranch, ...(channel && tier === 'channel' ? { channel } : {}), reason };
         const serialized = JSON.stringify(decision);
@@ -458,6 +481,7 @@ runs:
         POSTMAN_REGION: ${{ inputs.postman-region }}
         POSTMAN_STACK: ${{ inputs.postman-stack }}
         WORKING_DIRECTORY: ${{ inputs.working-directory }}
+        SPEC_PATH: ${{ inputs.spec-path }}
         CREDENTIAL_PREFLIGHT: ${{ inputs.credential-preflight }}
         REPO_WRITE_MODE: ${{ inputs.repo-write-mode }}
         POSTMAN_API_KEY: ${{ inputs.postman-api-key }}
@@ -469,8 +493,14 @@ runs:
         INSIGHTS_POSTMAN_ACCESS_TOKEN: ${{ inputs.insights-postman-access-token }}
       run: |
         if [ -n "$WORKING_DIRECTORY" ]; then
-          if ! node -e 'const fs=require("node:fs"),path=require("node:path");const target=path.resolve(process.env.GITHUB_WORKSPACE,process.env.WORKING_DIRECTORY);process.exit(fs.existsSync(target)&&fs.statSync(target).isDirectory()?0:1)'; then
+          if ! node -e 'const fs=require("node:fs"),path=require("node:path");const workspace=fs.realpathSync(process.env.GITHUB_WORKSPACE);const target=path.resolve(workspace,process.env.WORKING_DIRECTORY);if(!fs.existsSync(target)||!fs.statSync(target).isDirectory())process.exit(1);const realTarget=fs.realpathSync(target);const relative=path.relative(workspace,realTarget);process.exit(relative===""||(!relative.startsWith(`..${path.sep}`)&&relative!==".."&&!path.isAbsolute(relative))?0:1)'; then
             echo "::error::working-directory does not exist under GITHUB_WORKSPACE. Create the directory or correct the input."
+            exit 1
+          fi
+        fi
+        if [ -n "$SPEC_PATH" ]; then
+          if ! node -e 'const fs=require("node:fs"),path=require("node:path");const workspace=fs.realpathSync(process.env.GITHUB_WORKSPACE);const root=path.resolve(workspace,process.env.WORKING_DIRECTORY||"");const target=path.resolve(root,process.env.SPEC_PATH);if(!fs.existsSync(target)||!fs.statSync(target).isFile())process.exit(1);const realTarget=fs.realpathSync(target);const relative=path.relative(workspace,realTarget);process.exit(!relative.startsWith(`..${path.sep}`)&&relative!==".."&&!path.isAbsolute(relative)?0:1)'; then
+            echo "::error::spec-path does not name a file under GITHUB_WORKSPACE. Check out the file and use a repository-relative path."
             exit 1
           fi
         fi

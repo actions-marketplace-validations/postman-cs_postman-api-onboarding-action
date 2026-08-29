@@ -258,11 +258,16 @@ export function validateEnvironmentUidsEmit(source, diag) {
  */
 export function validateRepoSyncSummaryKeys(source, diag) {
   const label = diagLabel({ file: 'src/index.ts', ...diag });
-  const summary = source.match(/function createRepoSummary\([\s\S]*?JSON\.stringify\(\{([\s\S]*?)\}\);/);
-  if (!summary) {
+  const functionStart = source.indexOf('function createRepoSummary(');
+  const stringifyMarker = 'JSON.stringify({';
+  const stringifyStart = functionStart < 0 ? -1 : source.indexOf(stringifyMarker, functionStart);
+  const bodyStart = stringifyStart < 0 ? -1 : stringifyStart + stringifyMarker.length;
+  const bodyEnd = bodyStart < 0 ? -1 : source.indexOf('});', bodyStart);
+  if (functionStart < 0 || stringifyStart < 0 || bodyEnd < 0) {
     return [`${label}: createRepoSummary JSON.stringify shape not found`];
   }
-  const keys = [...summary[1].matchAll(/^\s*([A-Za-z0-9_]+)\s*(?:[,:]|$)/gm)].map((match) => match[1]).sort();
+  const summaryBody = source.slice(bodyStart, bodyEnd);
+  const keys = [...summaryBody.matchAll(/^\s*([A-Za-z0-9_]+)\s*(?:[,:]|$)/gm)].map((match) => match[1]).sort();
   const expected = [...REPO_SYNC_SUMMARY_KEYS].sort();
   if (keys.join(',') !== expected.join(',')) {
     return [

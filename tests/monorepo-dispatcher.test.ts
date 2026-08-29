@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -167,13 +168,46 @@ describe('monorepo dispatcher example', () => {
   it('runs both tracked collections through the Postman CLI from service-local resources', () => {
     const run = workflow.jobs.run;
     const combined = run.steps.map((step) => step.run ?? '').join('\n');
-    expect(combined).toContain("YAML.load_file('.postman/resources.yaml')");
+    expect(combined).toContain("YAML.safe_load(File.read('.postman/resources.yaml'), aliases: false)");
+    expect(combined).toContain('Postman resource IDs must not contain CR or LF characters');
     expect(combined).toContain('postman login --with-api-key "$POSTMAN_API_KEY"');
     expect(combined).toContain('postman collection run "$uid"');
     expect(combined).toContain('run_collection Smoke "$POSTMAN_SMOKE_COLLECTION_UID"');
     expect(combined).toContain('run_collection Contract "$POSTMAN_CONTRACT_COLLECTION_UID"');
     expect(combined).toContain('::group::');
     expect(combined).toContain('::endgroup::');
+    expect(combined).not.toContain('::group::${{ matrix.service }}');
+    const collectionStep = run.steps.find((step) => step.name === 'Run service collections');
+    expect(collectionStep?.env?.SERVICE_NAME).toBe('${{ matrix.service }}');
+    expect(collectionStep?.run).toContain('::group::$SERVICE_NAME');
+  });
+
+  it('rejects service directory names that are unsafe to propagate through the matrix', () => {
+    const { root, initial } = createFixture();
+    const unsafeService = '$(touch pwned)';
+    mkdirSync(path.join(root, 'services', unsafeService), { recursive: true });
+    writeFileSync(path.join(root, 'services', unsafeService, 'openapi.yaml'), 'openapi: 3.1.0\n');
+    const head = commit(root, 'test: add unsafe service name');
+    const outputPath = path.join(root, 'github-output.txt');
+    const result = spawnSync('bash', ['--noprofile', '--norc', '-c', detector], {
+      cwd: root,
+      env: {
+        ...process.env,
+        EVENT_NAME: 'push',
+        BEFORE_SHA: initial,
+        HEAD_SHA: head,
+        BASE_REF: '',
+        DEFAULT_BRANCH: 'main',
+        SYNC_COMMITTER_NAME: 'Postman',
+        SYNC_COMMITTER_EMAIL: 'support@postman.com',
+        GITHUB_OUTPUT: outputPath,
+        RUNNER_TEMP: root,
+      },
+      encoding: 'utf8',
+    });
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).toContain('Unsupported service directory name');
+    expect(existsSync(path.join(root, 'pwned'))).toBe(false);
   });
 
   it('dispatches every existing service deterministically', () => {
