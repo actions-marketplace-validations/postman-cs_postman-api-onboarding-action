@@ -47,6 +47,13 @@ const resourceResolver =
   workflow.jobs.run?.steps.find(
     (step) => step.name === 'Resolve service Postman resource IDs',
   )?.run ?? '';
+const resourceResolverRubyMatch = resourceResolver.match(
+  /^ruby <<'RUBY'\r?\n([\s\S]*?)\r?\nRUBY\s*$/,
+);
+if (!resourceResolverRubyMatch) {
+  throw new Error('Expected the resource resolver to contain one quoted Ruby heredoc');
+}
+const resourceResolverRuby = resourceResolverRubyMatch[1];
 const temporaryRoots: string[] = [];
 
 function git(root: string, args: string[], env: NodeJS.ProcessEnv = {}): string {
@@ -128,7 +135,10 @@ function runResourceResolver(resourcesYaml: string) {
   writeFileSync(path.join(root, '.postman', 'resources.yaml'), resourcesYaml);
   const githubEnv = path.join(root, 'github-env.txt');
   writeFileSync(githubEnv, 'EXISTING=preserved\n');
-  const result = spawnSync('bash', ['--noprofile', '--norc', '-c', resourceResolver], {
+  // Exercise the exact Ruby payload without an unnecessary Git Bash process.
+  // Starting both shells for every table case is particularly expensive on
+  // Windows and can obscure a resolver regression with harness startup delay.
+  const result = spawnSync('ruby', ['-e', resourceResolverRuby], {
     cwd: root,
     env: { ...process.env, GITHUB_ENV: githubEnv },
     encoding: 'utf8',
@@ -352,7 +362,7 @@ describe('monorepo dispatcher example', () => {
     const { result, githubEnv } = runResourceResolver(resources);
 
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect(githubEnv.trim().split('\n')).toEqual([
+    expect(githubEnv.trim().split(/\r?\n/)).toEqual([
       'EXISTING=preserved',
       'POSTMAN_SMOKE_COLLECTION_UID=12345678-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
       'POSTMAN_CONTRACT_COLLECTION_UID=12345678-11111111-2222-3333-4444-555555555555',
