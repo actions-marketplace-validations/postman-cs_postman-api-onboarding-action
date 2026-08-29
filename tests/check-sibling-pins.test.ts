@@ -348,6 +348,18 @@ ${goldenBody},
     expect(failures[0]).toContain('leakedSecretToken');
   });
 
+  it('rejects a missing summary terminator without backtracking over repeated markers', () => {
+    const hostileSource =
+      'function createRepoSummary(input) {\n' + 'JSON.stringify({\n'.repeat(100_000);
+    const started = performance.now();
+    const failures = validateRepoSyncSummaryKeys(hostileSource, {
+      repo: 'postman-repo-sync-action',
+      tag: 'v2.8.7'
+    });
+    expect(failures[0]).toContain('createRepoSummary JSON.stringify shape not found');
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   it('accepts and rejects gated-skip summary shapes', () => {
     expect(
       validateGatedSkipSummaryKeys(VALID_REPO_SYNC_INDEX, {

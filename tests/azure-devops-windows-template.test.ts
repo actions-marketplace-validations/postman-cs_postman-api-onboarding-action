@@ -43,12 +43,24 @@ describe('Azure DevOps Windows onboarding template', () => {
 
   it('pins every installed onboarding package instead of resolving latest', () => {
     const source = readFileSync(templatePath, 'utf8');
+    const template = parse(source);
+    const installStep = template.jobs[0].steps.find(
+      (step: { displayName?: string }) => step.displayName === 'Install pinned Postman onboarding CLIs'
+    );
     expect(source).not.toContain('@latest');
-    expect(source).toMatch(/onboarding-resolve-service-token@\$\{\{ parameters\.resolveVersion \}\}/);
-    expect(source).toMatch(/onboarding-bootstrap@\$\{\{ parameters\.bootstrapVersion \}\}/);
-    expect(source).toMatch(/onboarding-smoke-flow@\$\{\{ parameters\.smokeFlowVersion \}\}/);
-    expect(source).toMatch(/onboarding-repo-sync@\$\{\{ parameters\.repoSyncVersion \}\}/);
-    expect(source).toMatch(/onboarding-insights@\$\{\{ parameters\.insightsVersion \}\}/);
+    expect(installStep.pwsh).toContain('onboarding-resolve-service-token@$env:RESOLVE_VERSION');
+    expect(installStep.pwsh).toContain('onboarding-bootstrap@$env:BOOTSTRAP_VERSION');
+    expect(installStep.pwsh).toContain('onboarding-smoke-flow@$env:SMOKE_FLOW_VERSION');
+    expect(installStep.pwsh).toContain('onboarding-repo-sync@$env:REPO_SYNC_VERSION');
+    expect(installStep.pwsh).toContain('onboarding-insights@$env:INSIGHTS_VERSION');
+    expect(installStep.pwsh).not.toContain('${{ parameters.');
+    expect(installStep.env).toEqual({
+      RESOLVE_VERSION: '${{ parameters.resolveVersion }}',
+      BOOTSTRAP_VERSION: '${{ parameters.bootstrapVersion }}',
+      SMOKE_FLOW_VERSION: '${{ parameters.smokeFlowVersion }}',
+      REPO_SYNC_VERSION: '${{ parameters.repoSyncVersion }}',
+      INSIGHTS_VERSION: '${{ parameters.insightsVersion }}'
+    });
   });
 
   it('defaults bootstrapVersion to the pinned immutable 2.17.1', () => {
