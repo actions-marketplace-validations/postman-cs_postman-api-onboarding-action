@@ -92,21 +92,29 @@ describe('composite first-step input validation', () => {
     expect(manifest.inputs['repo-write-mode']?.default).toBe('commit-and-push');
   });
 
-  it('masks credentials, resolves branch decision, then validates before any child', () => {
+  it('resolves a credential-free branch decision before guarded masking and validation', () => {
     const steps = loadManifest().runs.steps;
-    expect(steps[0]?.id).toBe('mask_postman_credentials');
-    expect(steps[1]?.id).toBe('branch_decision');
+    expect(steps[0]?.id).toBe('branch_decision');
+    expect(steps[0]?.env).toEqual({
+      BRANCH_STRATEGY: '${{ inputs.branch-strategy }}',
+      CANONICAL_BRANCH: '${{ inputs.canonical-branch }}',
+      CHANNELS: '${{ inputs.channels }}'
+    });
+    expect(JSON.stringify(steps[0])).not.toMatch(/api-key|access-token|github-token|gh-fallback-token/i);
+    expect(steps[1]?.id).toBe('mask_postman_credentials');
+    expect(steps[1]?.if).toContain("tier != 'gated'");
     const validateStep = steps[2];
     expect(validateStep?.id).toBe('validate_postman_stack');
+    expect(validateStep?.if).toContain("tier != 'gated'");
     expect(validateStep?.env?.REPO_WRITE_MODE).toBe('${{ inputs.repo-write-mode }}');
     expect(validateStep?.env?.WORKING_DIRECTORY).toBe('${{ inputs.working-directory }}');
     expect(validateStep?.env?.SPEC_PATH).toBe('${{ inputs.spec-path }}');
-    expect(validateStep?.env?.POSTMAN_API_KEY).toBe('${{ inputs.postman-api-key }}');
-    expect(validateStep?.env?.POSTMAN_ACCESS_TOKEN).toBe('${{ inputs.postman-access-token }}');
+    expect(validateStep?.env?.POSTMAN_API_KEY).toContain("tier != 'gated'");
+    expect(validateStep?.env?.POSTMAN_ACCESS_TOKEN).toContain("tier != 'gated'");
     expect(validateStep?.env?.ENABLE_INSIGHTS).toBe('${{ inputs.enable-insights }}');
     expect(validateStep?.env?.ONBOARDING_SCOPE).toBe('${{ inputs.onboarding-scope }}');
-    expect(validateStep?.env?.INSIGHTS_POSTMAN_API_KEY).toBe('${{ inputs.insights-postman-api-key }}');
-    expect(validateStep?.env?.INSIGHTS_POSTMAN_ACCESS_TOKEN).toBe('${{ inputs.insights-postman-access-token }}');
+    expect(validateStep?.env?.INSIGHTS_POSTMAN_API_KEY).toContain("tier != 'gated'");
+    expect(validateStep?.env?.INSIGHTS_POSTMAN_ACCESS_TOKEN).toContain("tier != 'gated'");
     expect(validateStep?.env?.BRANCH_TIER).toBe('${{ steps.branch_decision.outputs.tier }}');
     expect(steps.findIndex((step) => step.id === 'bootstrap')).toBeGreaterThan(0);
   });
@@ -180,6 +188,18 @@ describe('composite first-step input validation', () => {
     const result = runValidation({ WORKING_DIRECTORY: '..' });
     expect(result.status).toBe(1);
     expect(combinedOutput(result)).toContain('working-directory does not exist under GITHUB_WORKSPACE');
+  }, 20_000);
+
+  it('rejects an existing sibling whose path merely shares the workspace prefix', () => {
+    const sibling = mkdtempSync(`${repoRoot}-evil-`);
+    try {
+      const result = runValidation({ WORKING_DIRECTORY: sibling });
+      expect(result.status).toBe(1);
+      expect(combinedOutput(result)).toContain('working-directory does not exist under GITHUB_WORKSPACE');
+      expect(combinedOutput(result)).not.toContain(sibling);
+    } finally {
+      rmSync(sibling, { recursive: true, force: true });
+    }
   }, 20_000);
 
   it('accepts an existing repository-relative spec path', () => {
@@ -328,16 +348,20 @@ describe('composite first-step input validation', () => {
 });
 
 describe('child invocation order and credential forwarding', () => {
-  it('masks every Postman credential before branch resolution and child actions', () => {
+  it('masks every Postman credential only after an eligible branch decision', () => {
     const steps = loadManifest().runs.steps;
     const maskStep = steps.find((step) => step.id === 'mask_postman_credentials');
-    expect(steps.indexOf(maskStep!)).toBe(0);
+    expect(steps[0]?.id).toBe('branch_decision');
+    expect(steps.indexOf(maskStep!)).toBe(1);
+    expect(maskStep?.if).toContain("tier != 'gated'");
     expect(maskStep?.env).toEqual({
       POSTMAN_TEAM_ID: '${{ inputs.postman-team-id }}',
-      POSTMAN_API_KEY: '${{ inputs.postman-api-key }}',
-      POSTMAN_ACCESS_TOKEN: '${{ inputs.postman-access-token }}',
-      INSIGHTS_POSTMAN_API_KEY: '${{ inputs.insights-postman-api-key }}',
-      INSIGHTS_POSTMAN_ACCESS_TOKEN: '${{ inputs.insights-postman-access-token }}'
+      POSTMAN_API_KEY: "${{ steps.branch_decision.outputs.tier != 'gated' && inputs.postman-api-key || '' }}",
+      POSTMAN_ACCESS_TOKEN: "${{ steps.branch_decision.outputs.tier != 'gated' && inputs.postman-access-token || '' }}",
+      INSIGHTS_POSTMAN_API_KEY:
+        "${{ steps.branch_decision.outputs.tier != 'gated' && inputs.insights-postman-api-key || '' }}",
+      INSIGHTS_POSTMAN_ACCESS_TOKEN:
+        "${{ steps.branch_decision.outputs.tier != 'gated' && inputs.insights-postman-access-token || '' }}"
     });
     expect(maskStep?.run).toContain("value=${value//'%'/%25}");
     expect(maskStep?.run).toContain("value=${value//$'\\n'/%0A}");
@@ -378,18 +402,59 @@ describe('child invocation order and credential forwarding', () => {
     const steps = loadManifest().runs.steps;
     const bootstrap = steps.find((candidate) => candidate.id === 'bootstrap');
     const repoSync = steps.find((candidate) => candidate.id === 'repo_sync');
+    expect(bootstrap?.if).toContain("tier != 'gated'");
     expect(bootstrap?.with?.['postman-api-key']).toBe("${{ steps.branch_decision.outputs.tier != 'gated' && inputs.postman-api-key || '' }}");
     expect(bootstrap?.with?.['postman-access-token']).toBe("${{ steps.branch_decision.outputs.tier != 'gated' && inputs.postman-access-token || '' }}");
-    expect(repoSync?.with?.['postman-api-key']).toBe('${{ inputs.postman-api-key }}');
-    expect(repoSync?.with?.['postman-access-token']).toBe('${{ inputs.postman-access-token }}');
+    expect(repoSync?.with?.['postman-api-key']).toContain("tier != 'gated'");
+    expect(repoSync?.with?.['postman-access-token']).toContain("tier != 'gated'");
     expect(repoSync?.if).toContain("tier != 'gated'");
   });
 
   it('forwards only dedicated human-user credentials to Insights', () => {
     const insights = loadManifest().runs.steps.find((step) => step.id === 'insights_onboarding');
-    expect(insights?.with?.['postman-api-key']).toBe('${{ inputs.insights-postman-api-key }}');
-    expect(insights?.with?.['postman-access-token']).toBe('${{ inputs.insights-postman-access-token }}');
+    expect(insights?.with?.['postman-api-key']).toContain('inputs.insights-postman-api-key');
+    expect(insights?.with?.['postman-access-token']).toContain('inputs.insights-postman-access-token');
+    expect(insights?.with?.['postman-api-key']).toContain("tier != 'gated'");
+    expect(insights?.with?.['postman-access-token']).toContain("tier != 'gated'");
     expect(insights?.with?.['postman-api-key']).not.toBe('${{ inputs.postman-api-key }}');
     expect(insights?.with?.['postman-access-token']).not.toBe('${{ inputs.postman-access-token }}');
+  });
+
+  it('guards every credential-bearing or mutating inner step from the gated path', () => {
+    const steps = loadManifest().runs.steps;
+    const guardedStepIds = [
+      'mask_postman_credentials',
+      'validate_postman_stack',
+      'bootstrap',
+      'smoke_flow',
+      'repo_sync',
+      'warn_tests_skipped_no_api_key',
+      'install_postman_cli_windows',
+      'run_tests_junit',
+      'upload_junit_artifact',
+      'insights_onboarding'
+    ];
+    for (const id of guardedStepIds) {
+      const step = steps.find((candidate) => candidate.id === id);
+      expect(step, `${id} exists`).toBeTruthy();
+      expect(step?.if, `${id} has a tier guard`).toContain("steps.branch_decision.outputs.tier != 'gated'");
+    }
+
+    const sensitiveInputNames = [
+      'postman-api-key',
+      'postman-access-token',
+      'insights-postman-api-key',
+      'insights-postman-access-token',
+      'github-token',
+      'gh-fallback-token'
+    ];
+    for (const step of steps.slice(1)) {
+      for (const value of [...Object.values(step.env ?? {}), ...Object.values(step.with ?? {})]) {
+        if (!sensitiveInputNames.some((name) => value.includes(`inputs.${name}`))) continue;
+        expect(value, `${step.id ?? step.uses} conditionally empties a sensitive value`).toContain(
+          "steps.branch_decision.outputs.tier != 'gated'"
+        );
+      }
+    }
   });
 });
