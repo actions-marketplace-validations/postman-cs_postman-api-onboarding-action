@@ -23,7 +23,12 @@ It applies to these repositories:
 
 - Each repository owns its own CI workflow and its own `v*` tag-triggered GitHub release workflow.
 - The composite action references sibling actions through immutable release tags in `action.yml`.
-- The public release contract is the git tag and GitHub release. Do not treat `package.json` version fields as the authoritative public release identifier.
+- Immutable release identity is derived from the repository `package.json` version at the tagged commit:
+  exact `vX.Y.Z`, plus `vX.Y` when the patch component is `0`.
+- The current consumer rolling channel for this composite is `v3`.
+- Every v3 release keeps `branch-strategy` defaulted to `legacy`; the
+  `publish-gate` default flip remains deferred/opt-in rather than shipped.
+- The public release contract is the git tag and GitHub release. Do not treat `package.json` version fields as the authoritative public release identifier by themselves.
 
 ## Source of truth
 
@@ -38,29 +43,74 @@ Do not duplicate full input and output tables across repositories. Link to the a
 
 ## Tag policy
 
-- Immutable release tags use the public `v1.x.y` pattern.
-- The moving `v1` tag is the rolling release channel.
-- Never rewrite or force-push an existing release tag.
-- Every public tag should have a corresponding GitHub release with generated notes.
+- Immutable release tags are version-derived (`vX.Y.Z`, and `vX.Y` only when patch is `0`).
+  These tags are never rewritten or force-pushed.
+- The moving `v3` tag is the current rolling consumer channel for this composite.
+  Rolling aliases are deliberately movable and may be force-updated forward only;
+  they must never regress to an older immutable version.
+- Immutable release tags have a corresponding GitHub release with generated notes;
+  a direct rolling-alias invocation is a successful no-op.
 
 ## Consumer guidance
 
-- Use `@v1` in quick-start examples when the goal is a short marketplace install path.
-- Recommend immutable tags such as `@v1.x.y` for reproducible production workflows.
-- Treat `@v1` as a convenience channel; pin an immutable `@v1.x.y` tag or commit SHA when you need a reproducible reference.
+- Use `@v3` in quick-start examples when the goal is a short marketplace install path.
+- Recommend immutable tags such as `@v3.x.y` for reproducible production workflows.
+- Treat `@v3` as a convenience channel; pin an immutable `@v3.x.y` tag or commit SHA when you need a reproducible reference.
 - For security-sensitive environments, document that SHA pinning is the strongest option.
 
 ## Composite dependency policy
+
+### Branch-aware v3 contract
+
+The v3 composite exposes `branch-strategy`, `canonical-branch`, `channels`, and
+`preview-ttl`, resolves one credential-free `POSTMAN_BRANCH_DECISION` before
+any secret-bearing step, and surfaces `sync-status` and `spec-version-url`.
+Direct and nested PR-derived events are credential-eligible only after positive
+same-repository ID and name proof. Unknown, malformed, fork, and unsupported
+events fail closed under every strategy, including legacy. Every gated-path
+child and secret-bearing step is skipped. There are no public migration knobs.
+
+The branch-aware v3 contract and bottom-up v3 child releases are shipped. This
+composite pins those released immutable child tags on the v3 channel, and the
+rolling `v3` alias advances after release checks pass. `branch-strategy`
+remains defaulted to `legacy`; consumers opt in to `publish-gate`. Never
+rewrite an immutable tag or force-push.
 
 ### Current rule
 
 The composite action currently depends on:
 
-- `postman-cs/postman-bootstrap-action@v2.9.0`
-- `postman-cs/postman-repo-sync-action@v2.1.0`
-- `postman-cs/postman-insights-onboarding-action@v2.1.0` when Insights is enabled
+- `postman-cs/postman-bootstrap-action@v2.21.10`
+- `postman-cs/postman-repo-sync-action@v2.10.9`
+- `postman-cs/postman-smoke-flow-action@v3.7.4` when `flow-path` or `flow-mode` is set
+- `postman-cs/postman-insights-onboarding-action@v2.5.2` when Insights is enabled
 
 Because these are immutable sibling pins, a consumer who pins `postman-api-onboarding-action` to an immutable tag gets a reproducible lower-level action set at runtime.
+
+### Automatic pin advance
+
+`.github/workflows/advance-pins.yml` selects only the unique immutable tag whose
+commit equals each sibling's promoted rolling major alias. Before editing, it
+also requires a non-draft GitHub Release whose `release-manifest.json` binds the
+exact repository, tag, peeled commit, package version, and `release.tgz` digest.
+Newer published-but-unpromoted tags are ineligible; missing or ambiguous aliases,
+releases, manifests, and attempted regressions fail closed. Notification, daily
+cron, and manual runs all use this same selector and ignore dispatch payloads.
+
+The selector rewrites every pin literal (manifest, contract tests, README, and
+this file), then the workflow validates the result with
+`scripts/check-sibling-pins.mjs` and the full test suite. It pushes only a topic
+branch and opens a pull request; it never writes `main` directly. The
+`postman-suite-pin-bot` GitHub App supplies two short-lived, non-overlapping
+tokens: a **Contents: read** token explicitly scoped to the four sibling
+repositories for release selection and verification, and a separate token
+scoped only to this composite repository with **Contents: write**, **Pull
+requests: write**, and **Actions: write** for the topic-branch push, PR creation,
+and CI dispatch. Initial checkout uses the workflow's read-only ambient
+`github.token` without persisting credentials; it is never a fallback for either
+App token. The composite write token is minted only after selection and all
+validation pass. Either required token mint failure aborts the run. Majors never
+advance automatically; crossing a major remains a reviewed change.
 
 ### Composite release rule
 
@@ -69,7 +119,9 @@ The composite action references immutable sibling tags inside `action.yml`. Ther
 - Every composite release must record the exact sibling tags it uses.
 - Any change to a pinned sibling version requires a new composite release.
 - The compatibility matrix in this document and the README must be updated in the same change.
-- The release workflow must run `scripts/check-sibling-pins.mjs` so the composite cannot ship stale sibling refs.
+- The release workflow must run `scripts/check-sibling-pins.mjs` so every
+  committed sibling ref is an existing immutable tag and every forwarded input
+  remains declared by that exact sibling release.
 
 ## Release order
 
@@ -77,44 +129,83 @@ Release from the bottom up:
 
 1. Release `postman-bootstrap-action` if it changed.
 2. Release `postman-repo-sync-action` if it changed.
-3. Release `postman-insights-onboarding-action` if it changed.
-4. Verify the published tags, CI status, and GitHub releases for every changed lower-level action.
-5. Review `postman-api-onboarding-action`:
+3. Release `postman-smoke-flow-action` if it changed.
+4. Release `postman-insights-onboarding-action` if it changed.
+5. Verify the published tags, CI status, and GitHub releases for every changed lower-level action.
+6. Review `postman-api-onboarding-action`:
    - Update `action.yml` to the exact lower-level release tags you want to bundle.
-6. Update `README.md`, this file, and any compatibility notes affected by the release.
-7. Release `postman-api-onboarding-action` last.
+7. Update `README.md`, this file, and any compatibility notes affected by the release.
+8. Release `postman-api-onboarding-action` last.
 
-## Live E2E Release Gate
+## Release checks
 
-Phase 1 of the live release gate covers only the actions currently exercised by
-`postman-cs/postman-actions-e2e` as released CLI artifacts:
+Releases are cut automatically. Merging to `main` runs `.github/workflows/auto-release.yml`,
+which derives the next version from the conventional-commit history, then runs
+`scripts/release-cut.mjs`: bump manifests, run the gate set, commit, and tag.
 
-- `postman-resolve-service-token-action`
-- `postman-bootstrap-action`
-- `postman-repo-sync-action`
-- `postman-smoke-flow-action`
+The tag is created only after the exact bytes of the release commit pass every
+gate, so a failed cut leaves no tag and burns no version number. The next merge
+retries on a fresh version, skipping any already-tagged one.
 
-For those repos, pull requests targeting `main` must pass the central live e2e
-gate before approval or merge. The PR workflow dispatches
-`postman-cs/postman-actions-e2e` with the PR head SHA pinned for the changed
-action and waits for the correlated run to succeed. Branches must live in the
-target repository so GitHub can provide the central e2e dispatch secret; forked
-PRs cannot satisfy the required merge gate until moved to an in-repo branch.
+Before planning another cut, auto-release reconciles the latest immutable tag
+when its GitHub release is missing or its rolling alias has not advanced. It
+does not duplicate an active release run, and a successful release completion
+resumes planning.
 
-For those repos, immutable publishing tags must pass the central live e2e gate
-before any GitHub release, npm package, or release tarball is published. The
-release workflow validates locally, dispatches the central e2e workflow with the
-exact action tag pinned, waits for the correlated workflow run to conclude
-successfully, and only then publishes. The release log must include the e2e run
-URL, correlation id, and conclusion.
+Do not push `vX.Y.Z` tags by hand. The pre-push hook refuses them, because a
+hand-pushed tag becomes a public identifier before any gate has run against it.
 
-The rolling `v1` alias validates locally but skips npm publish
-and the live e2e gate.
+To see what the next merge would cut:
 
-The composite action, Insights onboarding, and AWS spec discovery are not
-directly live-e2e-gated in Phase 1. Do not describe releases in those repos as
-live-e2e-gated until the harness adds real coverage for the released artifact and
-the repo's release workflow blocks on that gate.
+```sh
+git fetch origin --tags
+node scripts/release-cut.mjs --plan
+```
+
+## Verification and live monitors
+
+Pull requests and immutable releases run deterministic repository-local checks.
+The composite release verifies immutable sibling pins before packaging. Its
+release workflow classifies a tag before installing dependencies, validates and
+packs in an unprivileged job, then publishes only checksummed staged artifacts in
+the privileged job. Trusted envelope verification establishes artifact identity
+and checksums before any packaged verifier code is extracted. The GitHub Release
+precedes the best-effort npm publication attempt, so tags and GitHub Releases
+remain authoritative when npm access is unavailable. npm publication is
+OIDC-only. A successful npm publish still receives hard SRI identity
+verification; failed attempts warn and require rerunning the immutable release
+after trusted publishing is restored. That publication remains separate from
+live verification.
+
+Live sandbox E2E is not a PR or immutable-publication gate. The `onboarding-e2e`
+harness runs a nightly `full` monitor. After an immutable release publishes, the
+release workflow constructs a canonical closed manifest binding the immutable
+provider tag, its annotated source-manifest digest and peeled commit, the release
+tag/commit/artifact digest, and the exact tags, peeled commits, and action or CLI
+digests of all six suite repositories. The pinned provider runs the `full` suite,
+validates that the released composite's four child pins match that closure, and
+returns one bounded, canonical terminal result artifact tied to the exact run.
+Only that artifact's exact correlated success can advance the rolling `v3`
+alias. No manual or diagnostic mode can weaken promotion. Immediately before
+mutation, the alias job also re-resolves the immutable release tag and requires
+its peeled commit to equal the release workflow's `GITHUB_SHA`.
+
+### Release E2E dispatch token
+
+The release workflow's `verify-release-e2e` job mints a short-lived GitHub App
+installation token (one hour) via `actions/create-github-app-token`, scoped to
+`postman-cs` on `postman-actions-e2e`. This token carries the App installation
+permissions **Actions: write** and **Contents: read** on that repository and is
+fed to the E2E verifier as `E2E_DISPATCH_TOKEN` so the verifier can dispatch and
+observe the release-gated workflow run.
+
+> **Operator prerequisite:** the `postman-suite-pin-bot` GitHub App must be
+> installed on `postman-cs/postman-actions-e2e` with at least **Actions: write**
+> and **Contents: read** permissions. The composite release workflow does not
+> create or provision this installation itself; an operator must install the App
+> and grant those permissions before a correlated E2E gate can dispatch and
+> observe a run. If the App token cannot be minted or is empty, verification
+> fails closed — the verifier never falls back to an ambient or default token.
 
 ## Compatibility matrix
 
@@ -122,7 +213,7 @@ This matrix describes the current release model.
 
 | Composite reference used by consumers | Composite repository content | Lower-level dependency references | Result |
 | --- | --- | --- | --- |
-| `postman-api-onboarding-action@v1` | Rolling composite alias | Immutable sibling tags in the current composite content | Rolling composite channel with pinned siblings per composite revision |
+| `postman-api-onboarding-action@v3` | Rolling composite alias | Immutable sibling tags in the current composite content | Rolling composite channel with pinned siblings per composite revision |
 | Immutable composite release | Immutable composite repo tag | Immutable sibling tags | Fully reproducible |
 
 ## Marketplace documentation surface
@@ -144,10 +235,11 @@ Before pushing a new release tag:
 4. Confirm `README.md` and `RELEASE_POLICY.md` still match the actual composite wiring.
 5. Confirm `SUPPORT.md` and `SECURITY.md` still match the current support and vulnerability-reporting paths.
 6. If lower-level actions changed behavior, verify whether the composite repo needs a coordinated release.
-7. For a live-e2e-gated repo, confirm `E2E_DISPATCH_TOKEN` is configured and the
-   release workflow records a successful central e2e run before publish.
-8. Push the immutable release tag.
-9. Confirm that the matching GitHub release was published with generated notes.
+7. Merge to `main` and let auto-release cut the immutable tag after gates pass.
+8. Confirm npm publication or matching SRI retry identity and the matching
+   GitHub release.
+9. Confirm exact correlated E2E terminal success before the rolling alias moves.
+   A failed, blocked, cancelled, or timed-out verifier leaves the alias unchanged.
 
 ## What changes the policy
 

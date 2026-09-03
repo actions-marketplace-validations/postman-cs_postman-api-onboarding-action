@@ -1,0 +1,240 @@
+name: Auto Release
+
+# Cuts releases automatically from main.
+#
+# The tag is an OUTPUT of a passing run, never an input to one. release.yml
+# still triggers on `push: tags`, but nothing hand-pushes those tags any more:
+# this workflow creates a tag only after the exact bytes of the release commit
+# pass the package gate set. The cut holds its concurrency slot until Release
+# settles, so main pushes during E2E queue and reconcile after the current tag.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+
+permissions:
+  contents: read
+
+# One cut at a time. Never cancel a cut in flight: it holds an unpushed tag.
+concurrency:
+  group: auto-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Reconcile prior release
+        id: reconcile
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_CONCLUSION: ${{ github.event.workflow_run.conclusion || '' }}
+          ROLLING_ALIASES: major
+        run: |
+          set -euo pipefail
+          LATEST=""
+          while IFS= read -r CANDIDATE; do
+            if [[ "$CANDIDATE" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              EXPECTED="${CANDIDATE#v}"
+            elif [[ "$CANDIDATE" =~ ^v[0-9]+\.[0-9]+$ ]]; then
+              EXPECTED="${CANDIDATE#v}.0"
+            else
+              continue
+            fi
+            if ! PACKAGE_VERSION="$(git show "${CANDIDATE}^{commit}:package.json" 2>/dev/null | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version" 2>/dev/null)"; then
+              continue
+            fi
+            [ "$PACKAGE_VERSION" = "$EXPECTED" ] || continue
+            LATEST="$CANDIDATE"
+          done < <(git tag --list 'v*' --sort=v:refname)
+
+          TAG=""
+          if [ -n "$LATEST" ] && ! gh release view "$LATEST" >/dev/null 2>&1; then
+            PENDING_RELEASE="$(node scripts/release-cut.mjs --plan |
+              node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).release === true")"
+            if [ "$PENDING_RELEASE" = true ]; then
+              echo "::notice::The pending release will supersede unpublished $LATEST instead of retrying it."
+            else
+              TAG="$LATEST"
+            fi
+          elif [ -n "$LATEST" ]; then
+            VERSION="${LATEST#v}"
+            IFS='.' read -r MAJOR MINOR _ <<< "$VERSION"
+            if [ "$MAJOR" != 0 ]; then
+              TARGET="$(git rev-parse "${LATEST}^{commit}")"
+              read -r -a ALIAS_KINDS <<< "$ROLLING_ALIASES"
+              for KIND in "${ALIAS_KINDS[@]}"; do
+                case "$KIND" in
+                  major) ALIAS="v$MAJOR" ;;
+                  minor) ALIAS="v$MAJOR.$MINOR" ;;
+                  *) echo "::error::Unsupported rolling alias kind: $KIND"; exit 1 ;;
+                esac
+                if ! ALIAS_COMMIT="$(git rev-parse --verify "${ALIAS}^{commit}" 2>/dev/null)" ||
+                  [ "$ALIAS_COMMIT" != "$TARGET" ]; then
+                  PENDING_RELEASE="$(node scripts/release-cut.mjs --plan |
+                    node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).release === true")"
+                  if [ "$PENDING_RELEASE" = true ]; then
+                    echo "::notice::The pending release will supersede stale $ALIAS instead of retrying $LATEST."
+                  else
+                    TAG="$LATEST"
+                  fi
+                  break
+                fi
+              done
+            fi
+          fi
+
+          if [ -n "$TAG" ] && [ -n "$RELEASE_CONCLUSION" ] && [ "$RELEASE_CONCLUSION" != success ]; then
+            PENDING_RELEASE="$(node scripts/release-cut.mjs --plan |
+              node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).release === true")"
+            if [ "$PENDING_RELEASE" != true ]; then
+              echo "::notice::Not retrying failed release $LATEST without a newer pending cut."
+              echo "tag=" >> "$GITHUB_OUTPUT"
+              echo "blocked=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if [ -z "$TAG" ]; then
+            echo "blocked=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "blocked=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v7
+        if: steps.reconcile.outputs.blocked != 'true'
+        with:
+          node-version: '24'
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm ci
+        if: steps.reconcile.outputs.blocked != 'true'
+      - name: Install actionlint
+        if: steps.reconcile.outputs.blocked != 'true'
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/393031adb9afb225ee52ae2ccd7a5af5525e03e8/scripts/download-actionlint.bash) 1.7.11 "$RUNNER_TEMP"
+          echo "ACTIONLINT_BIN=$RUNNER_TEMP/actionlint" >> "$GITHUB_ENV"
+
+      - name: Plan release
+        id: plan
+        if: steps.reconcile.outputs.blocked != 'true'
+        env:
+          PLAN_FILE: ${{ runner.temp }}/plan.json
+        run: |
+          set -euo pipefail
+          node scripts/release-cut.mjs --plan | tee "$PLAN_FILE"
+          {
+            echo "release=$(node -p "require(process.env.PLAN_FILE).release === true")"
+            echo "version=$(node -p "require(process.env.PLAN_FILE).version || ''")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Cut release
+        if: steps.plan.outputs.release == 'true'
+        env:
+          ACTIONLINT_BIN: ${{ env.ACTIONLINT_BIN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node scripts/release-cut.mjs --execute
+
+      - name: Push release tag
+        if: steps.plan.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          git push origin "refs/tags/v${VERSION}"
+
+      - name: Resolve release target
+        id: release_target
+        if: steps.reconcile.outputs.blocked != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_FILE: ${{ runner.temp }}/plan.json
+        run: |
+          set -euo pipefail
+          RELEASE="$(node -p "require(process.env.PLAN_FILE).release === true")"
+          if [ "$RELEASE" = true ]; then
+            TAG="v$(node -p "require(process.env.PLAN_FILE).version")"
+          else
+            TAG="$(node -p "require(process.env.PLAN_FILE).previous || ''")"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::notice::No release tag is available to dispatch."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$RELEASE" != true ] && gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::Release $TAG already exists; no recovery dispatch needed."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Hold the concurrency slot until Release settles. A main push arriving
+      # during E2E then queues behind this run and reconciles the final state.
+      - name: Dispatch or await release workflow
+        if: steps.reconcile.outputs.tag != '' || steps.release_target.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.reconcile.outputs.tag || steps.release_target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          RUN_ID="$(gh run list --workflow release.yml --branch "$TAG" --limit 20 \
+            --json databaseId,status,createdAt \
+            --jq '[.[] | select(.status != "completed")] | sort_by(.createdAt) | last | .databaseId // empty')"
+
+          if [ -z "$RUN_ID" ]; then
+            BEFORE_ID="$(gh run list --workflow release.yml --branch "$TAG" --limit 1 \
+              --json databaseId --jq '.[0].databaseId // 0')"
+            gh workflow run release.yml --ref "$TAG"
+            for _ in $(seq 1 30); do
+              LATEST_ID="$(gh run list --workflow release.yml --branch "$TAG" --limit 1 \
+                --json databaseId --jq '.[0].databaseId // 0')"
+              if [ "$LATEST_ID" != 0 ] && [ "$LATEST_ID" != "$BEFORE_ID" ]; then
+                RUN_ID="$LATEST_ID"
+                break
+              fi
+              sleep 2
+            done
+            if [ -z "$RUN_ID" ]; then
+              echo "::error::Release $TAG did not appear after dispatch."
+              exit 1
+            fi
+          else
+            echo "::notice::Release $TAG is already queued or in progress as run $RUN_ID."
+          fi
+
+          for _ in $(seq 1 180); do
+            ROW="$(gh run view "$RUN_ID" --json status,conclusion --jq '[.status, .conclusion] | @tsv')"
+            IFS=$'\t' read -r STATUS CONCLUSION <<< "$ROW"
+            if [ "$STATUS" = completed ]; then
+              echo "::notice::Release $TAG completed with ${CONCLUSION:-unknown} in run $RUN_ID."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::Timed out waiting for Release $TAG run $RUN_ID."
+          exit 1
+
+      - name: Report skipped cut
+        if: steps.reconcile.outputs.blocked != 'true' && steps.plan.outputs.release != 'true'
+        env:
+          PLAN_FILE: ${{ runner.temp }}/plan.json
+        run: |
+          set -euo pipefail
+          echo "::notice::No release cut. $(node -p "require(process.env.PLAN_FILE).reason || 'no plan reason'")"

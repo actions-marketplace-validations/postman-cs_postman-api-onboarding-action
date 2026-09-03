@@ -1,11 +1,29 @@
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
 const repoRoot = path.resolve(__dirname, '..');
+
+function bashPath(filePath: string): string {
+  if (process.platform !== 'win32') return filePath;
+  return filePath.replace(/^([A-Za-z]):[\\/]/, (_, drive: string) => `/${drive.toLowerCase()}/`).replace(/\\/g, '/');
+}
+
+function bashExecutable(): string {
+  if (process.platform !== 'win32') return 'bash';
+  const candidates = [
+    process.env.GIT_INSTALL_ROOT && path.join(process.env.GIT_INSTALL_ROOT, 'bin', 'bash.exe'),
+    process.env.ProgramFiles && path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe'),
+    'C:\\Program Files\\Git\\bin\\bash.exe'
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  const executable = candidates.find((candidate) => existsSync(candidate));
+  if (!executable) throw new Error('Git Bash is required to test composite bash steps on Windows');
+  return executable;
+}
 
 type Step = {
   id?: string;
@@ -16,6 +34,7 @@ type Step = {
   run?: string;
   env?: Record<string, string>;
   with?: Record<string, string>;
+  'continue-on-error'?: boolean;
 };
 
 type ActionManifest = {
@@ -31,9 +50,11 @@ type ActionManifest = {
 
 type WorkflowManifest = {
   jobs: {
-    release: {
+    classify: {
       steps: Step[];
     };
+    'verify-package': { if: string };
+    publish: { if: string; steps: Step[] };
   };
 };
 
@@ -71,7 +92,7 @@ describe('postman-api-onboarding-action composite contract', () => {
 
     it('package.json name matches repository name', () => {
       const pkg = loadPackageJson();
-      expect(pkg.name).toBe('@postman-cse/onboarding-api');
+      expect(pkg.name).toBe('@postman-cs/onboarding-api');
     });
 
     it('description carries the suite suffix, not beta', () => {
@@ -95,6 +116,47 @@ describe('postman-api-onboarding-action composite contract', () => {
       }
     });
 
+    it('public docs guide consumers to composite v3, not v2', () => {
+      const scopedDocs = [
+        'README.md',
+        'SUPPORT.md',
+        'SECURITY.md',
+        'docs/protected-branch-workflows.md',
+        'docs/credentials.md',
+        'docs/deferred-tests.md'
+      ];
+      const readDoc = (rel: string): string =>
+        readFileSync(path.join(repoRoot, rel), 'utf8');
+
+      for (const doc of scopedDocs) {
+        const content = readDoc(doc);
+        expect(
+          content,
+          `${doc} must not reference postman-api-onboarding-action@v2`
+        ).not.toContain('postman-api-onboarding-action@v2');
+        expect(
+          content,
+          `${doc} must not reference composite v2.x.y immutable tags`
+        ).not.toMatch(/v2\.x\.y/);
+      }
+
+      const readme = readDoc('README.md');
+      expect(readme).toContain('postman-api-onboarding-action@v3');
+      expect(readme).toContain(
+        'Releases use immutable `v3.x.y` tags with `v3` as the rolling release channel'
+      );
+
+      const support = readDoc('SUPPORT.md');
+      expect(support).not.toContain('Use `@v2`');
+      expect(support).toContain('postman-api-onboarding-action@v3');
+      expect(support).toContain('`@v3`');
+      expect(support).toContain('v3.x.y');
+
+      const security = readDoc('SECURITY.md');
+      expect(security).toContain('v3.x.y');
+      expect(security).toContain('rolling `v3` alias');
+    });
+
     it('package.json version is a publishable semver release', () => {
       const pkg = loadPackageJson();
       expect(String(pkg.version)).toMatch(/^\d+\.\d+\.\d+$/);
@@ -103,38 +165,23 @@ describe('postman-api-onboarding-action composite contract', () => {
 
     it('publishes immutable release tags while skipping npm for the rolling alias', () => {
       const workflow = loadReleaseWorkflow();
-      const steps = workflow.jobs.release.steps;
-      const verifyStep = steps.find((step) => step.name === 'Verify release tag matches package version');
-      const releaseStep = steps.find((step) => step.name === 'Publish GitHub release');
-      const npmSetupStep = steps.find(
-        (step) =>
-          step.uses?.startsWith('actions/setup-node@') &&
-          step.with?.['registry-url'] &&
-          step.if === "steps.release_tag.outputs.npm_publish == 'true'"
-      );
-      const npmPackageStep = steps.find((step) => step.name === 'Check npm package version');
-      const publishStep = steps.find((step) => step.name === 'Publish to npm');
-      const attachStep = steps.find((step) => step.name === 'Attach npm tarball to release');
-      const uploadStep = steps.find((step) => step.name === 'Upload tarball');
+      const classifier = workflow.jobs.classify.steps.find((step) => step.name === 'Classify release tag');
+      const verify = workflow.jobs['verify-package'];
+      const publish = workflow.jobs.publish;
 
-      expect(verifyStep?.id).toBe('release_tag');
-      expect(verifyStep?.run).toContain('PUBLISH_TAGS=("$PKG_VERSION")');
-      expect(verifyStep?.run).toContain('PUBLISH_TAGS+=("$MAJOR.$MINOR")');
-      expect(verifyStep?.run).toContain('if [ "$TAG_VERSION" = "$MAJOR" ]; then');
-      expect(verifyStep?.run).not.toContain('if [ "$TAG_VERSION" = "0" ]; then');
-      expect(verifyStep?.run).toContain('or v$MAJOR');
-      expect(verifyStep?.run).toContain('npm_publish=true');
-      expect(verifyStep?.run).toContain('npm_publish=false');
-      expect(verifyStep?.run).toContain('skipping npm publish');
-      expect(verifyStep?.run).not.toContain('ALIAS_TAGS');
-      expect(verifyStep?.run).not.toContain('publish_tag');
-      expect(releaseStep?.if).toBeUndefined();
-      expect(npmSetupStep?.if).toBe("steps.release_tag.outputs.npm_publish == 'true'");
-      expect(npmPackageStep?.id).toBe('npm_package');
-      expect(npmPackageStep?.run).toContain('npm view "$PKG_NAME@$PKG_VERSION" version');
-      expect(publishStep?.if).toBe("steps.release_tag.outputs.npm_publish == 'true' && steps.npm_package.outputs.already_published != 'true'");
-      expect(attachStep?.if).toBeUndefined();
-      expect(uploadStep?.if).toBeUndefined();
+      expect(classifier?.id).toBe('release_tag');
+      expect(classifier?.run).toContain('IMMUTABLE=("v$PKG_VERSION")');
+      expect(classifier?.run).toContain('IMMUTABLE+=("v$MAJOR.$MINOR")');
+      expect(classifier?.run).toContain("release_kind=immutable");
+      expect(classifier?.run).toContain("release_kind=alias");
+      expect(verify.if).toBe("needs.classify.outputs.release_kind == 'immutable'");
+      expect(publish.if).toBe("needs.classify.outputs.release_kind == 'immutable'");
+      const publishStep = publish.steps.find((step) => step.id === 'npm-publish');
+      const releaseStep = publish.steps.find((step) => step.name === 'Publish GitHub release');
+      expect(publishStep?.run).toContain('npm publish ./release/release.tgz --provenance --access public');
+      expect(publishStep?.['continue-on-error']).toBe(true);
+      expect(releaseStep?.uses).toContain('softprops/action-gh-release');
+      expect(publish.steps.indexOf(releaseStep!)).toBeLessThan(publish.steps.indexOf(publishStep!));
     });
 
     it('README documents all inputs from action.yml', () => {
@@ -174,21 +221,27 @@ describe('postman-api-onboarding-action composite contract', () => {
     it('has the complete expected input set', () => {
       const manifest = loadManifest();
       expect(Object.keys(manifest.inputs)).toEqual([
+        'working-directory',
         'workspace-id',
         'spec-id',
         'baseline-collection-id',
         'smoke-collection-id',
         'contract-collection-id',
+        'onboarding-scope',
         'sync-examples',
         'collection-sync-mode',
         'spec-sync-mode',
         'release-label',
         'monitor-id',
         'mock-url',
+        'mock-visibility',
+        'mock-environment-enabled',
         'monitor-cron',
         'generate-ci-workflow',
         'ci-workflow-path',
+        'ci-runner-os',
         'project-name',
+        'repo-url',
         'domain',
         'domain-code',
         'governance-group',
@@ -197,6 +250,8 @@ describe('postman-api-onboarding-action composite contract', () => {
         'workspace-team-id',
         'spec-url',
         'spec-path',
+        'spec-files-json',
+        'preserve-oas30-type-null',
         'breaking-change-mode',
         'breaking-baseline-spec-path',
         'breaking-rules-path',
@@ -210,7 +265,13 @@ describe('postman-api-onboarding-action composite contract', () => {
         'env-runtime-urls-json',
         'postman-api-key',
         'postman-access-token',
+        'insights-postman-api-key',
+        'insights-postman-access-token',
         'credential-preflight',
+        'branch-strategy',
+        'canonical-branch',
+        'channels',
+        'preview-ttl',
         'postman-team-id',
         'postman-region',
         'postman-stack',
@@ -220,6 +281,10 @@ describe('postman-api-onboarding-action composite contract', () => {
         'current-ref',
         'committer-name',
         'committer-email',
+        'flow-path',
+        'flow-mode',
+        'flow-allow-delete',
+        'persist-derived-flow',
         'enable-insights',
         'skip-built-in-tests',
         'cluster-name',
@@ -232,9 +297,13 @@ describe('postman-api-onboarding-action composite contract', () => {
       ]);
     });
 
-    it('postman-api-key is required because bootstrap depends on it', () => {
+    it('postman-api-key and postman-access-token are individually optional; validation requires at least one', () => {
       const manifest = loadManifest();
-      expect(manifest.inputs['postman-api-key']?.required).toBe(true);
+      expect(manifest.inputs['postman-api-key']?.required).toBe(false);
+      expect(manifest.inputs['postman-access-token']?.required).toBe(false);
+      const validateStep = manifest.runs.steps.find((step) => step.id === 'validate_postman_stack');
+      expect(validateStep?.run).toContain('Attempted onboarding credential validation failed');
+      expect(validateStep?.run).toContain('neither postman-api-key nor postman-access-token was supplied');
     });
 
     it('postman-team-id remains an optional explicit override', () => {
@@ -249,6 +318,58 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(manifest.inputs['project-name']?.required).toBe(true);
       expect(manifest.inputs['spec-url']?.required).toBe(false);
       expect(manifest.inputs['spec-path']?.required).toBe(false);
+    });
+
+    it('forwards an optional working directory to every repo-relative child', () => {
+      const manifest = loadManifest();
+      const workingDirectory = manifest.inputs['working-directory'];
+      const bootstrap = manifest.runs.steps.find((step) => step.id === 'bootstrap');
+      const smokeFlow = manifest.runs.steps.find((step) => step.id === 'smoke_flow');
+      const repoSync = manifest.runs.steps.find((step) => step.id === 'repo_sync');
+      const insights = manifest.runs.steps.find((step) => step.id === 'insights_onboarding');
+      const validation = manifest.runs.steps.find((step) => step.id === 'validate_postman_stack');
+
+      expect(workingDirectory).toMatchObject({ required: false, default: '' });
+      expect(workingDirectory?.description).toMatch(/repository-root-relative/i);
+      for (const child of [bootstrap, smokeFlow, repoSync]) {
+        expect(child?.with?.['working-directory']).toBe('${{ inputs.working-directory }}');
+      }
+      expect(insights?.with?.['working-directory']).toBeUndefined();
+      expect(validation?.env?.WORKING_DIRECTORY).toBe('${{ inputs.working-directory }}');
+      expect(validation?.run).toContain('working-directory does not exist');
+    });
+
+    it('forwards an optional explicit repo-url to both mutating child actions', () => {
+      const manifest = loadManifest();
+      expect(manifest.inputs['repo-url']?.required).toBe(false);
+      expect(manifest.inputs['repo-url']?.description).toMatch(/isolated synthetic repository identity/i);
+      const bootstrap = manifest.runs.steps.find((step) => step.id === 'bootstrap');
+      const repoSync = manifest.runs.steps.find((step) => step.id === 'repo_sync');
+      expect(bootstrap?.env?.INPUT_REPO_URL).toBe('${{ inputs.repo-url }}');
+      expect(bootstrap?.with?.['repo-url']).toBeUndefined();
+      expect(repoSync?.with?.['repo-url']).toBe('${{ inputs.repo-url }}');
+    });
+
+    it('places optional content-free spec-files-json immediately after spec-path with empty default', () => {
+      const manifest = loadManifest();
+      const inputNames = Object.keys(manifest.inputs);
+      const inventory = manifest.inputs['spec-files-json'];
+
+      expect(inputNames.indexOf('spec-files-json')).toBe(inputNames.indexOf('spec-path') + 1);
+      expect(inventory?.required).toBe(false);
+      expect(inventory?.default).toBe('');
+      expect(inventory?.description).toMatch(/content-free/i);
+      expect(inventory?.description).toMatch(/root must equal spec-path/i);
+      expect(inventory?.description).toMatch(/not a directory mode/i);
+      expect(inventory?.description).toMatch(/never embedded/i);
+      expect(inventory?.description).not.toMatch(/\bcontent\s*[:=]/i);
+      expect(Object.keys(manifest.outputs)).not.toContain('spec-files-json');
+      for (const [name, output] of Object.entries(manifest.outputs)) {
+        expect(output.description, `output "${name}" must not claim embedded source content`).not.toMatch(
+          /source content|file content|embedded content/i
+        );
+        expect(output.value).not.toMatch(/spec-files-json/);
+      }
     });
 
     it('keeps integration-backend internal with no visible manifest default', () => {
@@ -268,6 +389,26 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(manifest.inputs['skip-built-in-tests']?.default).toBe('false');
     });
 
+    it('defaults onboarding scope to full so existing callers keep full onboarding behavior', () => {
+      const manifest = loadManifest();
+      expect(manifest.inputs['onboarding-scope']).toBeDefined();
+      expect(manifest.inputs['onboarding-scope']?.required).toBe(false);
+      expect(manifest.inputs['onboarding-scope']?.default).toBe('full');
+    });
+
+    it('keeps OAS 3.0 null compatibility opt-in and forwards it to bootstrap', () => {
+      const manifest = loadManifest();
+      const bootstrapStep = manifest.runs.steps.find((step) => step.id === 'bootstrap');
+
+      expect(manifest.inputs['preserve-oas30-type-null']).toMatchObject({
+        required: false,
+        default: 'false'
+      });
+      expect(bootstrapStep?.with?.['preserve-oas30-type-null']).toBe(
+        '${{ inputs.preserve-oas30-type-null }}'
+      );
+    });
+
     it('has the complete expected output set', () => {
       const manifest = loadManifest();
       expect(Object.keys(manifest.outputs)).toEqual([
@@ -280,11 +421,21 @@ describe('postman-api-onboarding-action composite contract', () => {
         'breaking-change-summary-json',
         'environment-uids-json',
         'mock-url',
+        'mock-visibility',
+        'mock-auth-required',
+        'mock-environment-uid',
+        'mock-environment-status',
         'monitor-id',
         'repo-sync-summary-json',
         'commit-sha',
+        'sync-status',
+        'spec-version-url',
+        'flow-apply-status',
+        'flow-apply-summary-json',
+        'derived-flow-path',
         'bootstrap-outcome',
         'repo-sync-outcome',
+        'smoke-flow-outcome',
         'insights-outcome',
         'insights-status',
         'insights-verification-token',
@@ -300,9 +451,7 @@ describe('postman-api-onboarding-action composite contract', () => {
     it('is a composite action with the expected step count', () => {
       const manifest = loadManifest();
       expect(manifest.runs.using).toBe('composite');
-      // bootstrap, repo-sync, warn-no-api-key (D2 skip+warn), junit-runner,
-      // junit-uploader, insights.
-      expect(manifest.runs.steps).toHaveLength(7);
+      expect(manifest.runs.steps).toHaveLength(11);
     });
 
     it('uses pinned bootstrap, repo-sync, junit-runner, junit-uploader, and insights actions', () => {
@@ -313,15 +462,17 @@ describe('postman-api-onboarding-action composite contract', () => {
       const repoSyncStep = steps.find((step) => step.id === 'repo_sync');
       const junitStep = steps.find((step) => step.id === 'run_tests_junit');
       const uploadStep = steps.find((step) => step.id === 'upload_junit_artifact');
+      const smokeFlowStep = steps.find((step) => step.id === 'smoke_flow');
       const insightsStep = steps.find((step) => step.id === 'insights_onboarding');
 
       expect(validateStep?.shell).toBe('bash');
-      expect(bootstrapStep?.uses).toBe('postman-cs/postman-bootstrap-action@v2.9.0');
-      expect(repoSyncStep?.uses).toBe('postman-cs/postman-repo-sync-action@v2.1.0');
+      expect(bootstrapStep?.uses).toBe('postman-cs/postman-bootstrap-action@v2.21.10');
+      expect(repoSyncStep?.uses).toBe('postman-cs/postman-repo-sync-action@v2.10.9');
       expect(junitStep?.shell).toBe('bash');
       expect(uploadStep?.uses).toBe('actions/upload-artifact@v7.0.1');
-      expect(insightsStep?.uses).toBe('postman-cs/postman-insights-onboarding-action@v2.1.0');
-      for (const step of [bootstrapStep, repoSyncStep, insightsStep]) {
+      expect(smokeFlowStep?.uses).toBe('postman-cs/postman-smoke-flow-action@v3.7.4');
+      expect(insightsStep?.uses).toBe('postman-cs/postman-insights-onboarding-action@v2.5.2');
+      for (const step of [bootstrapStep, repoSyncStep, smokeFlowStep, insightsStep]) {
         expect(step?.uses).not.toMatch(/@(main|v0)$/);
       }
     });
@@ -335,15 +486,131 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(validateStep?.env?.POSTMAN_REGION).toBe('${{ inputs.postman-region }}');
       expect(validateStep?.env?.POSTMAN_STACK).toBe('${{ inputs.postman-stack }}');
       expect(validateStep?.run).toContain('prod|beta');
-      expect(validateStep?.run).toContain('postman-stack must be one of: prod, beta');
+      expect(validateStep?.run).toContain('Attempted postman-stack validation failed');
+      expect(validateStep?.run).toContain('Accepted values: prod, beta');
       expect(validateStep?.run).toContain('us|eu');
-      expect(validateStep?.run).toContain('postman-region must be one of: us, eu');
+      expect(validateStep?.run).toContain('Attempted postman-region validation failed');
+      expect(validateStep?.run).toContain('Accepted values: us, eu');
+    });
+
+    it('validates repo-write-mode before any child runs', () => {
+      const manifest = loadManifest();
+      const steps = manifest.runs.steps;
+      const validateStep = steps[2];
+
+      expect(validateStep?.id).toBe('validate_postman_stack');
+      expect(validateStep?.env?.REPO_WRITE_MODE).toBe('${{ inputs.repo-write-mode }}');
+      expect(validateStep?.run).toContain('none|commit-only|commit-and-push');
+      expect(validateStep?.run).toContain('Attempted repo-write-mode validation failed');
+      expect(validateStep?.run).toContain('Accepted values: none, commit-only, commit-and-push');
+      expect(manifest.inputs['repo-write-mode']?.default).toBe('commit-and-push');
+      expect(steps.findIndex((step) => step.uses?.includes('postman-bootstrap-action'))).toBeGreaterThan(
+        0
+      );
+    });
+
+    it('resolves one credential-free branch decision before masking and every child invocation', () => {
+      const manifest = loadManifest();
+      expect(manifest.runs.steps[0]?.id).toBe('branch_decision');
+      expect(manifest.runs.steps[0]?.env).toEqual({
+        BRANCH_STRATEGY: '${{ inputs.branch-strategy }}',
+        CANONICAL_BRANCH: '${{ inputs.canonical-branch }}',
+        CHANNELS: '${{ inputs.channels }}'
+      });
+      expect(manifest.runs.steps[1]?.id).toBe('mask_postman_credentials');
+      expect(manifest.runs.steps[1]?.if).toContain("tier != 'gated'");
+      for (const id of ['bootstrap', 'repo_sync', 'smoke_flow', 'insights_onboarding']) {
+        expect(manifest.runs.steps.find((step) => step.id === id)?.env?.POSTMAN_BRANCH_DECISION).toBe('${{ steps.branch_decision.outputs.branch-decision }}');
+      }
+    });
+
+    it('keeps v2 legacy and forwards the released branch-aware surface', () => {
+      const manifest = loadManifest();
+      expect(manifest.inputs['branch-strategy']?.default).toBe('legacy');
+      const bootstrap = manifest.runs.steps.find((step) => step.id === 'bootstrap');
+      const repoSync = manifest.runs.steps.find((step) => step.id === 'repo_sync');
+      const smokeFlow = manifest.runs.steps.find((step) => step.id === 'smoke_flow');
+      const insights = manifest.runs.steps.find((step) => step.id === 'insights_onboarding');
+      for (const child of [bootstrap, repoSync, smokeFlow, insights]) {
+        expect(child?.with?.['branch-strategy']).toBe('${{ inputs.branch-strategy }}');
+        expect(child?.with?.['canonical-branch']).toBe('${{ inputs.canonical-branch }}');
+        expect(child?.with?.channels).toBe('${{ inputs.channels }}');
+      }
+      expect(repoSync?.with?.['preview-ttl']).toBe('${{ inputs.preview-ttl }}');
+      expect(manifest.outputs['sync-status']?.value).toContain('sync-status');
+      expect(manifest.outputs['spec-version-url']?.value).toBe('${{ steps.repo_sync.outputs.spec-version-url }}');
+    });
+
+    it('forwards bootstrap spec-content-changed to repo-sync so a no-op canonical sync never tags a spec version', () => {
+      // Regression: repo-sync defaults a missing spec-content-changed input to
+      // true, so dropping this forwarding published a Spec Hub version tag on
+      // every no-op canonical sync.
+      const repoSync = loadManifest().runs.steps.find((step) => step.id === 'repo_sync');
+      expect(repoSync?.with?.['spec-content-changed']).toBe(
+        '${{ steps.bootstrap.outputs.spec-content-changed }}'
+      );
+    });
+
+    it('runs gated bootstrap without credentials and skips credentialed children', () => {
+      const manifest = loadManifest();
+      const bootstrap = manifest.runs.steps.find((step) => step.id === 'bootstrap');
+      const repoSync = manifest.runs.steps.find((step) => step.id === 'repo_sync');
+      const smokeFlow = manifest.runs.steps.find((step) => step.id === 'smoke_flow');
+      const insights = manifest.runs.steps.find((step) => step.id === 'insights_onboarding');
+      expect(bootstrap?.with?.['postman-api-key']).toContain("tier != 'gated'");
+      expect(bootstrap?.with?.['postman-access-token']).toContain("tier != 'gated'");
+      expect(repoSync?.if).toContain("tier != 'gated'");
+      expect(smokeFlow?.if).toContain("tier != 'gated'");
+      expect(insights?.if).toContain("tier != 'gated'");
+    });
+
+    it('invokes bootstrap, smoke-flow, repo-sync, and insights exactly once in that order', () => {
+      const childIds = loadManifest()
+        .runs.steps.map((step) => step.id)
+        .filter(
+          (id): id is string =>
+            id === 'bootstrap' ||
+            id === 'repo_sync' ||
+            id === 'smoke_flow' ||
+            id === 'insights_onboarding'
+        );
+      expect(childIds).toEqual(['bootstrap', 'smoke_flow', 'repo_sync', 'insights_onboarding']);
+    });
+
+    it('smoke-flow step is conditional on flow-path or flow-mode and forwards bootstrap asset IDs', () => {
+      const manifest = loadManifest();
+      const smokeFlow = manifest.runs.steps.find((s) => s.id === 'smoke_flow');
+      expect(smokeFlow?.if).toContain('flow-path');
+      expect(smokeFlow?.if).toContain('flow-mode');
+      expect(smokeFlow?.if).toContain("inputs.onboarding-scope == 'full'");
+      expect(smokeFlow?.if).toContain("!= ''");
+      expect(smokeFlow?.with?.['flow-path']).toBe('${{ inputs.flow-path }}');
+      expect(smokeFlow?.with?.['flow-mode']).toBe(
+        "${{ inputs.flow-mode == '' && 'auto' || inputs.flow-mode }}"
+      );
+      expect(smokeFlow?.with?.['flow-allow-delete']).toBe('${{ inputs.flow-allow-delete }}');
+      expect(manifest.inputs['flow-mode']?.default).toBe('');
+      expect(manifest.inputs['flow-allow-delete']?.default).toBe('false');
+      expect(smokeFlow?.with?.['workspace-id']).toBe('${{ steps.bootstrap.outputs.workspace-id }}');
+      expect(smokeFlow?.with?.['spec-id']).toBe('${{ steps.bootstrap.outputs.spec-id }}');
+      expect(smokeFlow?.with?.['smoke-collection-id']).toBe(
+        '${{ steps.bootstrap.outputs.smoke-collection-id }}'
+      );
+      expect(smokeFlow?.with?.['team-id']).toBe('${{ inputs.postman-team-id }}');
+      expect(manifest.inputs['flow-path']?.default).toBe('');
+      expect(manifest.outputs['flow-apply-status']?.value).toBe(
+        '${{ steps.smoke_flow.outputs.flow-apply-status }}'
+      );
+      expect(manifest.outputs['smoke-flow-outcome']?.value).toBe(
+        '${{ steps.smoke_flow.outcome }}'
+      );
     });
 
     it('insights step is conditional on enable-insights', () => {
       const manifest = loadManifest();
       const insightsStep = manifest.runs.steps.find((s) => s.id === 'insights_onboarding');
       expect(insightsStep?.if).toContain('enable-insights');
+      expect(insightsStep?.if).toContain("inputs.onboarding-scope == 'full'");
       expect(insightsStep?.if).toContain("'true'");
     });
 
@@ -352,8 +619,10 @@ describe('postman-api-onboarding-action composite contract', () => {
       const junitStep = manifest.runs.steps.find((s) => s.id === 'run_tests_junit');
       const uploadStep = manifest.runs.steps.find((s) => s.id === 'upload_junit_artifact');
       expect(junitStep?.if).toContain('skip-built-in-tests');
+      expect(junitStep?.if).toContain("inputs.onboarding-scope == 'full'");
       expect(junitStep?.if).toContain("'true'");
       expect(uploadStep?.if).toContain('skip-built-in-tests');
+      expect(uploadStep?.if).toContain("inputs.onboarding-scope == 'full'");
       expect(uploadStep?.if).toContain("'true'");
     });
 
@@ -372,6 +641,12 @@ describe('postman-api-onboarding-action composite contract', () => {
       );
       expect(bootstrapStep?.with?.['contract-collection-id']).toBe(
         '${{ inputs.contract-collection-id }}'
+      );
+      expect(bootstrapStep?.with?.['onboarding-scope']).toBe(
+        '${{ inputs.onboarding-scope }}'
+      );
+      expect(bootstrapStep?.with?.['preserve-oas30-type-null']).toBe(
+        '${{ inputs.preserve-oas30-type-null }}'
       );
       expect(bootstrapStep?.with?.['breaking-change-mode']).toBe(
         '${{ inputs.breaking-change-mode }}'
@@ -403,19 +678,73 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(repoSyncStep?.with?.['contract-collection-id']).toBe(
         '${{ steps.bootstrap.outputs.contract-collection-id }}'
       );
+      expect(repoSyncStep?.with?.['onboarding-scope']).toBe(
+        '${{ inputs.onboarding-scope }}'
+      );
+      expect(repoSyncStep?.with?.['prebuilt-collections-json']).toBe(
+        "${{ steps.smoke_flow.outcome == 'skipped' && steps.bootstrap.outputs.prebuilt-collections-json || '' }}"
+      );
       expect(repoSyncStep?.with?.['spec-id']).toBe(
         '${{ steps.bootstrap.outputs.spec-id }}'
       );
       expect(repoSyncStep?.with?.['spec-path']).toBe(
         '${{ inputs.spec-path }}'
       );
+      expect(repoSyncStep?.with?.['spec-files-json']).toBeUndefined();
       expect(repoSyncStep?.with?.['releases-json']).toBeUndefined();
+      expect(manifest.inputs['prebuilt-collections-json']).toBeUndefined();
       expect(repoSyncStep?.with?.['generate-ci-workflow']).toBe(
         '${{ inputs.generate-ci-workflow }}'
       );
       expect(repoSyncStep?.with?.['ci-workflow-path']).toBe(
         '${{ inputs.ci-workflow-path }}'
       );
+      expect(repoSyncStep?.with?.['ci-runner-os']).toBe('${{ inputs.ci-runner-os }}');
+    });
+
+    it('verifies local OpenAPI prebuilt manifest wiring, output mapping, and absence of mode/cap inputs', () => {
+      const manifest = loadManifest();
+      const repoSyncStep = manifest.runs.steps.find((step) => step.id === 'repo_sync');
+
+      // Bootstrap output passes to repo-sync prebuilt-collections-json input
+      expect(repoSyncStep?.with?.['prebuilt-collections-json']).toBe(
+        "${{ steps.smoke_flow.outcome == 'skipped' && steps.bootstrap.outputs.prebuilt-collections-json || '' }}"
+      );
+
+      // Public collection ID outputs remain bootstrap IDs
+      expect(manifest.outputs['collections-json']?.value).toBe(
+        '${{ steps.bootstrap.outputs.collections-json }}'
+      );
+
+      // No prebuilt collections mode, kill-switch, fallback, or size/count cap inputs exposed
+      const inputNames = Object.keys(manifest.inputs);
+      expect(inputNames).not.toContain('prebuilt-collections-json');
+      expect(inputNames.some((name) => /prebuilt.*(mode|kill|switch|fallback)/i.test(name))).toBe(false);
+      expect(inputNames.some((name) => /prebuilt.*(size|count|cap|limit)/i.test(name))).toBe(false);
+    });
+
+    it('forwards local spec-path and spec-files-json to bootstrap only when spec-url is empty', () => {
+      const manifest = loadManifest();
+      const bootstrapStep = manifest.runs.steps.find((step) => step.id === 'bootstrap');
+
+      expect(bootstrapStep?.with?.['spec-url']).toBe('${{ inputs.spec-url }}');
+      expect(bootstrapStep?.with?.['spec-path']).toBe(
+        "${{ inputs.spec-url == '' && inputs.spec-path || '' }}"
+      );
+      expect(bootstrapStep?.with?.['spec-files-json']).toBe(
+        "${{ inputs.spec-url == '' && inputs.spec-files-json || '' }}"
+      );
+      // Sibling pins stay on the current immutable tags.
+      expect(bootstrapStep?.uses).toBe('postman-cs/postman-bootstrap-action@v2.21.10');
+      expect(
+        manifest.runs.steps.find((step) => step.id === 'repo_sync')?.uses
+      ).toBe('postman-cs/postman-repo-sync-action@v2.10.9');
+      expect(
+        manifest.runs.steps.find((step) => step.id === 'smoke_flow')?.uses
+      ).toBe('postman-cs/postman-smoke-flow-action@v3.7.4');
+      expect(
+        manifest.runs.steps.find((step) => step.id === 'insights_onboarding')?.uses
+      ).toBe('postman-cs/postman-insights-onboarding-action@v2.5.2');
     });
 
     it('surfaces final outputs from phase steps', () => {
@@ -456,22 +785,36 @@ describe('postman-api-onboarding-action composite contract', () => {
       );
     });
 
-    it('passes postman-team-id as POSTMAN_TEAM_ID env to all steps', () => {
+    it('withholds postman-team-id from branch classification and forwards it only after classification', () => {
       const manifest = loadManifest();
-      for (const step of manifest.runs.steps) {
+      expect(manifest.runs.steps[0]?.id).toBe('branch_decision');
+      expect(manifest.runs.steps[0]?.env?.POSTMAN_TEAM_ID).toBeUndefined();
+      for (const step of manifest.runs.steps.slice(1)) {
         expect(step.env?.POSTMAN_TEAM_ID).toBe('${{ inputs.postman-team-id }}');
       }
     });
 
-    it('passes postman-api-key and postman-access-token to bootstrap and repo-sync', () => {
+    it('isolates dedicated human-user Insights credentials from suite credentials', () => {
       const manifest = loadManifest();
-      const bootstrapStep = manifest.runs.steps.find((s) => s.id === 'bootstrap');
-      const repoSyncStep = manifest.runs.steps.find((s) => s.id === 'repo_sync');
-
-      expect(bootstrapStep?.with?.['postman-api-key']).toBe('${{ inputs.postman-api-key }}');
-      expect(bootstrapStep?.with?.['postman-access-token']).toBe('${{ inputs.postman-access-token }}');
-      expect(repoSyncStep?.with?.['postman-api-key']).toBe('${{ inputs.postman-api-key }}');
-      expect(repoSyncStep?.with?.['postman-access-token']).toBe('${{ inputs.postman-access-token }}');
+      const bootstrap = manifest.runs.steps.find((s) => s.id === 'bootstrap');
+      const repoSync = manifest.runs.steps.find((s) => s.id === 'repo_sync');
+      expect(bootstrap?.with?.['postman-api-key']).toContain('inputs.postman-api-key');
+      expect(bootstrap?.with?.['postman-access-token']).toContain('inputs.postman-access-token');
+      expect(repoSync?.with?.['postman-api-key']).toContain('inputs.postman-api-key');
+      expect(repoSync?.with?.['postman-access-token']).toContain('inputs.postman-access-token');
+      const insights = manifest.runs.steps.find((step) => step.id === 'insights_onboarding');
+      expect(insights?.with?.['postman-api-key']).toContain('inputs.insights-postman-api-key');
+      expect(insights?.with?.['postman-access-token']).toContain('inputs.insights-postman-access-token');
+      for (const value of [
+        bootstrap?.with?.['postman-api-key'],
+        bootstrap?.with?.['postman-access-token'],
+        repoSync?.with?.['postman-api-key'],
+        repoSync?.with?.['postman-access-token'],
+        insights?.with?.['postman-api-key'],
+        insights?.with?.['postman-access-token']
+      ]) {
+        expect(value).toContain("tier != 'gated'");
+      }
     });
 
     it('credential-preflight defaults to warn and is optional', () => {
@@ -483,11 +826,15 @@ describe('postman-api-onboarding-action composite contract', () => {
     it('validates credential-preflight as warn or enforce only before downstream actions run', () => {
       const manifest = loadManifest();
       const validateStep = manifest.runs.steps.find((step) => step.id === 'validate_postman_stack');
+      const preflightCase = validateStep?.run?.match(
+        /case "\$CREDENTIAL_PREFLIGHT" in[\s\S]*?esac/
+      )?.[0];
 
       expect(validateStep?.env?.CREDENTIAL_PREFLIGHT).toBe('${{ inputs.credential-preflight }}');
-      expect(validateStep?.run).toContain('warn|enforce');
-      expect(validateStep?.run).toContain('credential-preflight must be one of: warn, enforce');
-      expect(validateStep?.run).not.toMatch(/\b(disabled|false|none|off|skip)\b/);
+      expect(preflightCase).toContain('warn|enforce');
+      expect(preflightCase).toContain('Attempted credential-preflight validation failed');
+      expect(preflightCase).toContain('Accepted values: warn, enforce');
+      expect(preflightCase).not.toMatch(/\b(disabled|false|none|off|skip)\b/);
     });
 
     it('passes credential-preflight to bootstrap, repo-sync, and insights', () => {
@@ -514,8 +861,10 @@ describe('postman-api-onboarding-action composite contract', () => {
       const bootstrapStep = manifest.runs.steps.find((s) => s.id === 'bootstrap');
 
       expect(bootstrapStep?.with?.['governance-group']).toBe('${{ inputs.governance-group }}');
-      expect(bootstrapStep?.with?.['github-token']).toBe('${{ inputs.github-token }}');
-      expect(bootstrapStep?.with?.['gh-fallback-token']).toBe('${{ inputs.gh-fallback-token }}');
+      expect(bootstrapStep?.with?.['github-token']).toContain('inputs.github-token');
+      expect(bootstrapStep?.with?.['github-token']).toContain("tier != 'gated'");
+      expect(bootstrapStep?.with?.['gh-fallback-token']).toContain('inputs.gh-fallback-token');
+      expect(bootstrapStep?.with?.['gh-fallback-token']).toContain("tier != 'gated'");
     });
 
     it('passes integration-backend to bootstrap and repo-sync', () => {
@@ -536,16 +885,24 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(bootstrapStep?.with?.['workspace-team-id']).toBe(
         '${{ inputs.workspace-team-id }}'
       );
+      expect(bootstrapStep?.with?.['workspace-team-id']).not.toBe(
+        '${{ inputs.postman-team-id }}'
+      );
       expect(repoSyncStep?.with?.['workspace-team-id']).toBeUndefined();
       expect(insightsStep?.with?.['workspace-team-id']).toBeUndefined();
     });
 
     it('workspace-team-id input is optional with no default', () => {
       const manifest = loadManifest();
+      const description = manifest.inputs['workspace-team-id']?.description ?? '';
       expect(manifest.inputs['workspace-team-id']).toBeDefined();
       expect(manifest.inputs['workspace-team-id']?.required).toBe(false);
       expect(manifest.inputs['workspace-team-id']?.default).toBeUndefined();
-      expect(manifest.inputs['workspace-team-id']?.description).toContain('org-mode');
+      expect(description).toContain('org-mode');
+      expect(description).toContain('SUB-TEAM');
+      expect(description).toContain('squad');
+      expect(description).toMatch(/parent\/org/);
+      expect(description).toContain('never a valid value');
     });
 
     it('passes hidden postman-stack through to bootstrap', () => {
@@ -597,6 +954,20 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(junitStep?.run).not.toContain('"${{ inputs.postman-cli-install-url }}"');
     });
 
+    it('preinstalls the native Postman CLI before the Bash test adapter on Windows', () => {
+      const manifest = loadManifest();
+      const installStep = manifest.runs.steps.find(
+        (step) => step.id === 'install_postman_cli_windows'
+      );
+      const junitStep = manifest.runs.steps.find((step) => step.id === 'run_tests_junit');
+
+      expect(installStep?.shell).toBe('pwsh');
+      expect(installStep?.if).toContain("runner.os == 'Windows'");
+      expect(installStep?.env?.POSTMAN_CLI_INSTALL_URL).toContain('win64.ps1');
+      expect(installStep?.run).toContain('DownloadString($env:POSTMAN_CLI_INSTALL_URL)');
+      expect(junitStep?.run).toContain('Postman CLI was not installed by the Windows setup step');
+    });
+
     it('run_tests_junit script remains valid Bash', () => {
       const manifest = loadManifest();
       const junitStep = manifest.runs.steps.find((s) => s.id === 'run_tests_junit');
@@ -604,7 +975,7 @@ describe('postman-api-onboarding-action composite contract', () => {
       expect(junitStep?.shell).toBe('bash');
       expect(junitStep?.run).toBeTruthy();
       expect(() => execFileSync('bash', ['-n'], { input: junitStep?.run })).not.toThrow();
-    });
+    }, 20_000);
 
     it('run_tests_junit does not validate the install URL with an inline Bash regex', () => {
       const manifest = loadManifest();
@@ -624,6 +995,200 @@ describe('postman-api-onboarding-action composite contract', () => {
         (junitStep?.run ?? '').indexOf('SMOKE=')
       );
     });
+
+    it('run_tests_junit keeps nonfatal control flow, conditions, and output contracts', () => {
+      const manifest = loadManifest();
+      const junitStep = manifest.runs.steps.find((s) => s.id === 'run_tests_junit');
+      const script = junitStep?.run ?? '';
+
+      expect(junitStep?.['continue-on-error']).toBe(true);
+      expect(junitStep?.if).toContain("steps.bootstrap.outputs.collections-json != ''");
+      expect(junitStep?.if).toContain("inputs.skip-built-in-tests != 'true'");
+      expect(junitStep?.if).toContain("inputs.postman-api-key != ''");
+      expect(junitStep?.env?.PROJECT_NAME).toBe('${{ inputs.project-name }}');
+      expect(junitStep?.env?.COLLECTIONS_JSON).toBe('${{ steps.bootstrap.outputs.collections-json }}');
+      expect(junitStep?.env?.ENVIRONMENT_UIDS_JSON).toBe(
+        '${{ steps.repo_sync.outputs.environment-uids-json }}'
+      );
+      expect(script).toContain('set +e');
+      expect(script).toContain('escape_annotation()');
+      expect(script).toContain('::add-mask::$(escape_annotation "$POSTMAN_API_KEY")');
+      expect(script).not.toContain('::add-mask::$POSTMAN_API_KEY');
+      expect(script).not.toContain('2>&1 || true');
+      expect(script).not.toContain('|| true');
+      expect(script.indexOf('SMOKE_RUN_STATUS')).toBeLessThan(script.indexOf('CONTRACT_RUN_STATUS'));
+      expect(manifest.outputs['collections-json']?.value).toBe(
+        '${{ steps.bootstrap.outputs.collections-json }}'
+      );
+      expect(manifest.outputs['environment-uids-json']?.value).toBe(
+        '${{ steps.repo_sync.outputs.environment-uids-json }}'
+      );
+    });
+
+    it('run_tests_junit emits actionable nonfatal warnings under stubbed login/parse/smoke failure', () => {
+      const manifest = loadManifest();
+      const junitStep = manifest.runs.steps.find((s) => s.id === 'run_tests_junit');
+      const script = junitStep?.run;
+      expect(script).toBeTruthy();
+
+      const harnessRoot = mkdtempSync(path.join(tmpdir(), 'run-tests-junit-'));
+      const binDir = path.join(harnessRoot, 'bin');
+      const runnerTemp = path.join(harnessRoot, 'runner-temp');
+      const testApiKey = 'PMAK-secret%val\n::warning::forged-from-key';
+      const encodedApiKey = 'PMAK-secret%25val%0A::warning::forged-from-key';
+      const projectName = 'demo%proj\nname';
+      const encodedProjectName = 'demo%25proj%0Aname';
+      const smokeId = 'col-smoke-123';
+      const contractId = 'col-contract-456';
+      const contractMarker = path.join(harnessRoot, 'contract-ran.marker');
+
+      try {
+        mkdirSync(binDir, { recursive: true });
+        mkdirSync(runnerTemp, { recursive: true });
+
+        writeFileSync(
+          path.join(binDir, 'postman'),
+          [
+            '#!/usr/bin/env bash',
+            'set -euo pipefail',
+            'if [ "${1:-}" = "login" ]; then',
+            '  echo "Error: authentication failed for provided API key" >&2',
+            '  exit 2',
+            'fi',
+            'if [ "${1:-}" = "collection" ] && [ "${2:-}" = "run" ]; then',
+            '  collection_id="${3:-}"',
+            '  out=""',
+            '  prev=""',
+            '  for arg in "$@"; do',
+            '    if [ "$prev" = "--reporter-junit-export" ]; then',
+            '      out="$arg"',
+            '    fi',
+            '    prev="$arg"',
+            '  done',
+            '  if [ -n "$out" ]; then',
+            '    mkdir -p "$(dirname "$out")"',
+            "    printf '%s\\n' '<?xml version=\"1.0\"?><testsuites></testsuites>' > \"$out\"",
+            '  fi',
+            `  if [ "$collection_id" = "${smokeId}" ]; then`,
+            '    echo "Error: smoke collection request failed" >&2',
+            '    exit 4',
+            '  fi',
+            `  if [ "$collection_id" = "${contractId}" ]; then`,
+            `    printf 'contract-ok\\n' > "${bashPath(contractMarker)}"`,
+            '    exit 0',
+            '  fi',
+            '  echo "unexpected collection id: $collection_id" >&2',
+            '  exit 99',
+            'fi',
+            'echo "unexpected postman invocation: $*" >&2',
+            'exit 99',
+            ''
+          ].join('\n'),
+          { mode: 0o755 }
+        );
+        chmodSync(path.join(binDir, 'postman'), 0o755);
+
+        writeFileSync(
+          path.join(binDir, 'jq'),
+          [
+            '#!/usr/bin/env bash',
+            'set -euo pipefail',
+            'filter=""',
+            'while [ "$#" -gt 0 ]; do',
+            '  case "$1" in',
+            '    -r) shift ;;',
+            '    *) filter="$1"; shift ;;',
+            '  esac',
+            'done',
+            'input=$(cat || true)',
+            'if [[ "$filter" == *to_entries* ]]; then',
+            '  echo "jq: parse error: Invalid numeric literal at line 1, column 1" >&2',
+            '  exit 5',
+            'fi',
+            'if [[ "$filter" == *smoke* ]]; then',
+            `  printf '%s\\n' '${smokeId}'`,
+            '  exit 0',
+            'fi',
+            'if [[ "$filter" == *contract* ]]; then',
+            `  printf '%s\\n' '${contractId}'`,
+            '  exit 0',
+            'fi',
+            'echo "unexpected jq filter: $filter input=$input" >&2',
+            'exit 99',
+            ''
+          ].join('\n'),
+          { mode: 0o755 }
+        );
+        chmodSync(path.join(binDir, 'jq'), 0o755);
+
+        const result = spawnSync(bashExecutable(), ['--noprofile', '--norc', '-c', script as string], {
+          env: {
+            PATH: `${bashPath(binDir)}:/usr/local/bin:/usr/bin:/bin`,
+            HOME: bashPath(harnessRoot),
+            BASH_ENV: '',
+            ENV: '',
+            RUNNER_TEMP: bashPath(runnerTemp),
+            POSTMAN_API_KEY: testApiKey,
+            POSTMAN_REGION: 'us',
+            PROJECT_NAME: projectName,
+            COLLECTIONS_JSON: JSON.stringify({ smoke: smokeId, contract: contractId }),
+            ENVIRONMENT_UIDS_JSON: 'not-json{{{',
+            POSTMAN_CLI_INSTALL_URL: 'https://example.invalid/install.sh',
+            POSTMAN_TEAM_ID: ''
+          },
+          encoding: 'utf8'
+        });
+        const status = result.status ?? 1;
+        const combined = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+        const outputLines = combined.split(/\r?\n/);
+        const maskLines = outputLines.filter((line) => line.startsWith('::add-mask::'));
+        const withoutMaskProtocol = outputLines
+          .filter((line) => !line.startsWith('::add-mask::'))
+          .join('\n');
+
+        expect(status).toBe(0);
+        expect(maskLines).toHaveLength(1);
+        expect(maskLines[0]).toBe(`::add-mask::${encodedApiKey}`);
+        expect(maskLines[0]?.includes('\n')).toBe(false);
+        expect(maskLines[0]).toContain('%25');
+        expect(maskLines[0]).toContain('%0A');
+        expect(outputLines).not.toContain('::warning::forged-from-key');
+        expect(outputLines.some((line) => line === '::error::forged-from-key')).toBe(false);
+        expect(withoutMaskProtocol).not.toContain(testApiKey);
+        expect(withoutMaskProtocol).not.toContain('::warning::forged-from-key');
+        expect(withoutMaskProtocol).not.toContain(encodedApiKey);
+
+        expect(combined).toContain('Error: authentication failed for provided API key');
+        expect(combined).toContain(
+          `::warning::Postman CLI login failed for project=${encodedProjectName} region=us: exit status 2`
+        );
+        expect(combined).toContain('Verify postman-api-key and postman-region, then rerun');
+        expect(combined).toContain('jq: parse error: Invalid numeric literal');
+        expect(combined).toContain(
+          `::warning::Failed to parse environment-uids-json for project=${encodedProjectName}: exit status 5`
+        );
+        expect(combined).toContain(
+          'Inspect the environment-uids-json upstream step output and rerun'
+        );
+        expect(combined).toContain(
+          `::warning::Smoke collection run failed for collection=${smokeId} project=${encodedProjectName} environment=none: exit status 4`
+        );
+        expect(combined).toContain(
+          'Fix auth, environment, or request failures, then rerun'
+        );
+        const loginWarning = outputLines.find((line) =>
+          line.startsWith('::warning::Postman CLI login failed')
+        );
+        expect(loginWarning).toBeTruthy();
+        expect(loginWarning?.includes('\n')).toBe(false);
+        expect(loginWarning).toContain('%25');
+        expect(loginWarning).toContain('%0A');
+        expect(withoutMaskProtocol).not.toContain(projectName);
+        expect(readFileSync(contractMarker, 'utf8')).toContain('contract-ok');
+      } finally {
+        rmSync(harnessRoot, { recursive: true, force: true });
+      }
+    }, 20_000);
 
     it('insights step receives workspace-id from bootstrap output', () => {
       const manifest = loadManifest();
@@ -663,14 +1228,25 @@ describe('postman-api-onboarding-action composite contract', () => {
   });
 
   describe('Phase 3: Safe Defaults', () => {
-    it('generate-ci-workflow defaults to true', () => {
+    it('leaves generate-ci-workflow unset so repo-sync can choose the context default', () => {
       const manifest = loadManifest();
-      expect(manifest.inputs['generate-ci-workflow']?.default).toBe('true');
+      expect(manifest.inputs['generate-ci-workflow']?.default).toBeUndefined();
+      expect(manifest.inputs['generate-ci-workflow']?.description).toMatch(/repository root/i);
+      expect(manifest.inputs['generate-ci-workflow']?.description).toMatch(/working-directory/i);
+      const repoSync = manifest.runs.steps.find((step) => step.id === 'repo_sync');
+      expect(repoSync?.with?.['generate-ci-workflow']).toBe(
+        '${{ inputs.generate-ci-workflow }}'
+      );
     });
 
     it('ci-workflow-path defaults to .github/workflows/ci.yml', () => {
       const manifest = loadManifest();
       expect(manifest.inputs['ci-workflow-path']?.default).toBe('.github/workflows/ci.yml');
+    });
+
+    it('ci-runner-os defaults to linux', () => {
+      const manifest = loadManifest();
+      expect(manifest.inputs['ci-runner-os']?.default).toBe('linux');
     });
 
     it('environments-json defaults to ["prod"]', () => {

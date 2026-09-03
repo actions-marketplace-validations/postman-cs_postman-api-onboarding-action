@@ -5,7 +5,7 @@ On GitHub Actions, use the composite action as documented in the [README](../REA
 Install the CLIs globally:
 
 ```bash
-npm install -g @postman-cse/onboarding-bootstrap @postman-cse/onboarding-repo-sync @postman-cse/onboarding-resolve-service-token
+npm install -g @postman-cs/onboarding-bootstrap @postman-cs/onboarding-repo-sync @postman-cs/onboarding-resolve-service-token
 ```
 
 For CI jobs that need governance, workspace linking, or system environment association, mint a service-account access token before bootstrap:
@@ -24,17 +24,31 @@ POSTMAN_TEAM_ID=$(jq -r '.["team-id"]' postman-token.json)
 
 Use `POSTMAN_REGION=eu` for EU data residency and pass the same region to every Postman CLI in the pipeline.
 
+`POSTMAN_TEAM_ID` (from the resolver output above) is the parent/org
+integration id; it is never a squad id. Set `POSTMAN_WORKSPACE_TEAM_ID`
+independently to the numeric squad id when the PMAK's team is scoped under a
+Postman organization with multiple sub-teams; leave it unset otherwise. The two
+ids are distinct and are never interchangeable.
+
 Run bootstrap first and save its JSON output:
 
 ```bash
-postman-bootstrap \
-  --project-name "my-api" \
-  --spec-url "https://raw.githubusercontent.com/postman-cs/postman-api-onboarding-action/main/examples/core-payments-openapi.yaml" \
-  --postman-api-key "$POSTMAN_API_KEY" \
-  --postman-access-token "$POSTMAN_ACCESS_TOKEN" \
-  --postman-team-id "$POSTMAN_TEAM_ID" \
-  --postman-region "$POSTMAN_REGION" \
+# POSTMAN_WORKSPACE_TEAM_ID is optional; only set it for a multi-squad org.
+bootstrap_args=(
+  --project-name "my-api"
+  --spec-url "https://raw.githubusercontent.com/postman-cs/postman-api-onboarding-action/main/examples/core-payments-openapi.yaml"
+  --postman-api-key "$POSTMAN_API_KEY"
+  --postman-access-token "$POSTMAN_ACCESS_TOKEN"
+  --postman-team-id "$POSTMAN_TEAM_ID"
+  --postman-region "$POSTMAN_REGION"
   --result-json ./bootstrap-result.json
+)
+
+if [ -n "$POSTMAN_WORKSPACE_TEAM_ID" ]; then
+  bootstrap_args+=(--workspace-team-id "$POSTMAN_WORKSPACE_TEAM_ID")
+fi
+
+postman-bootstrap "${bootstrap_args[@]}"
 ```
 
 Extract the outputs you need from the JSON:
@@ -64,4 +78,4 @@ postman-repo-sync \
 
 Both CLIs support `--dotenv-path` for shell-friendly KEY=VALUE output that can be sourced with `source ./bootstrap.env`.
 
-For Insights linking outside GitHub Actions, install `@postman-cse/onboarding-insights` and run `postman-insights-onboard` after the service has been discovered by Insights. See [postman-insights-onboarding-action/docs/cli.md](https://github.com/postman-cs/postman-insights-onboarding-action/blob/main/docs/cli.md) for the required service, workspace, and environment inputs.
+For Insights linking outside GitHub Actions, install `@postman-cs/onboarding-insights` and run `postman-insights-onboard` after the service has been discovered by Insights. See [postman-insights-onboarding-action/docs/cli.md](https://github.com/postman-cs/postman-insights-onboarding-action/blob/main/docs/cli.md) for the required service, workspace, and environment inputs.

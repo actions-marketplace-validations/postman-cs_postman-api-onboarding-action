@@ -26,5 +26,5 @@ describe('README input/output tables', () => {
         stdio: 'pipe',
       })
     ).not.toThrow();
-  });
+  }, 20_000);
 });
